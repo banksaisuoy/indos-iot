@@ -1,0 +1,432 @@
+// IndOS — Industrial IoT Operating System — Prisma Schema (SQLite)
+// Self-hosted, enterprise-grade. All entities modeled for unlimited scale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Identity & Access ────────────────────────────────────────────────
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  role        String   @default("operator") // admin | engineer | operator | viewer
+  orgId       String?
+  org         Organization? @relation(fields: [orgId], references: [id])
+  avatar      String?
+  status      String   @default("active") // active | disabled
+  lastLogin   DateTime?
+  twoFA       Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  type        String   @default("operator") // operator | customer | integrator
+  industry    String?
+  country     String?
+  createdAt   DateTime @default(now())
+  customers   Customer[]
+  projects    Project[]
+  users       User[]
+}
+
+model Customer {
+  id          String   @id @default(cuid())
+  name        String
+  email       String?
+  phone       String?
+  orgId       String
+  org         Organization @relation(fields: [orgId], references: [id])
+  projects    Project[]
+  createdAt   DateTime @default(now())
+}
+
+// ─── Project & Topology Hierarchy ─────────────────────────────────────
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  category    String   @default("general") // energy | agriculture | solar | water | factory | greenhouse | weather | coldstorage | smarthome
+  status      String   @default("active") // active | paused | archived
+  location    String?
+  lat         Float?
+  lng         Float?
+  orgId       String?
+  org         Organization? @relation(fields: [orgId], references: [id])
+  customerId  String?
+  customer    Customer?   @relation(fields: [customerId], references: [id])
+  factories   Factory[]
+  devices     Device[]
+  alarms      Alarm[]
+  workOrders  WorkOrder[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Factory {
+  id          String   @id @default(cuid())
+  name        String
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id])
+  location    String?
+  lat         Float?
+  lng         Float?
+  buildings   Building[]
+  createdAt   DateTime @default(now())
+}
+
+model Building {
+  id          String   @id @default(cuid())
+  name        String
+  factoryId   String
+  factory     Factory  @relation(fields: [factoryId], references: [id])
+  floors      String?
+  lines       ProductionLine[]
+  createdAt   DateTime @default(now())
+}
+
+model ProductionLine {
+  id          String   @id @default(cuid())
+  name        String
+  buildingId  String
+  building    Building @relation(fields: [buildingId], references: [id])
+  machines    Machine[]
+  createdAt   DateTime @default(now())
+}
+
+model Machine {
+  id          String   @id @default(cuid())
+  name        String
+  lineId      String
+  line        ProductionLine @relation(fields: [lineId], references: [id])
+  model       String?
+  manufacturer String?
+  serial      String?
+  status      String   @default("idle") // running | idle | maintenance | fault | offline
+  oee         Float    @default(0)
+  availability Float   @default(0)
+  performance Float    @default(0)
+  quality     Float    @default(0)
+  devices     Device[]
+  createdAt   DateTime @default(now())
+}
+
+// ─── Devices & Edge ───────────────────────────────────────────────────
+model Device {
+  id          String   @id @default(cuid())
+  name        String
+  mac         String   @unique
+  serial      String?
+  type        String   @default("sensor") // sensor | gateway | plc | relay | camera | meter | inverter | controller
+  protocol    String   @default("mqtt") // mqtt | modbus-rtu | modbus-tcp | opc-ua | bacnet | ethernet-ip | can | lorawan | http | ble | zigbee
+  firmware    String?
+  ip          String?
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id])
+  machineId   String?
+  machine     Machine? @relation(fields: [machineId], references: [id])
+  status      String   @default("online") // online | offline | fault | maintenance
+  cpu         Float    @default(0)
+  memory      Float    @default(0)
+  temperature Float    @default(0)
+  signal      Float    @default(0)
+  battery     Float?
+  lastSeen    DateTime @default(now())
+  config      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  telemetry   Telemetry[]
+  alarms      Alarm[]
+}
+
+model Gateway {
+  id          String   @id @default(cuid())
+  name        String
+  mac         String   @unique
+  model       String?
+  firmware    String?
+  ip          String?
+  status      String   @default("online")
+  deviceCount Int      @default(0)
+  uptime      Float    @default(0)
+  location    String?
+  createdAt   DateTime @default(now())
+}
+
+model Sensor {
+  id          String   @id @default(cuid())
+  name        String
+  metric      String   // temperature | humidity | pressure | flow | voltage | current | power | ph | co2 | rpm
+  unit        String
+  deviceId    String?
+  minValue    Float?
+  maxValue    Float?
+  createdAt   DateTime @default(now())
+}
+
+// ─── Telemetry (time-series in SQLite, simulated) ─────────────────────
+model Telemetry {
+  id        String   @id @default(cuid())
+  deviceId  String
+  device    Device   @relation(fields: [deviceId], references: [id])
+  metric    String
+  value     Float
+  ts        DateTime @default(now())
+
+  @@index([deviceId, metric, ts])
+}
+
+// ─── Alarms & Notifications ───────────────────────────────────────────
+model Alarm {
+  id          String   @id @default(cuid())
+  deviceId    String?
+  device      Device?  @relation(fields: [deviceId], references: [id])
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id])
+  severity    String   @default("warning") // critical | warning | info
+  category    String   @default("system") // system | device | energy | environment | security | maintenance
+  message     String
+  state       String   @default("active") // active | acknowledged | resolved
+  ackedBy     String?
+  ackedAt     DateTime?
+  resolvedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([state, severity])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String?
+  title     String
+  body      String
+  channel   String   @default("inapp") // inapp | email | sms | webhook
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ─── Maintenance ──────────────────────────────────────────────────────
+model WorkOrder {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  type        String   @default("corrective") // corrective | preventive | predictive | inspection
+  priority    String   @default("medium") // low | medium | high | critical
+  status      String   @default("open") // open | inprogress | onhold | completed | cancelled
+  projectId   String?
+  project     Project? @relation(fields: [projectId], references: [id])
+  assignee    String?
+  machineName String?
+  dueDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── OTA Firmware ─────────────────────────────────────────────────────
+model Firmware {
+  id          String   @id @default(cuid())
+  version     String
+  deviceType  String
+  checksum    String?
+  sizeKb      Int      @default(0)
+  notes       String?
+  status      String   @default("stable") // draft | stable | deprecated
+  createdAt   DateTime @default(now())
+  jobs        OtaJob[]
+}
+
+model OtaJob {
+  id          String   @id @default(cuid())
+  firmwareId  String
+  firmware    Firmware @relation(fields: [firmwareId], references: [id])
+  scope       String   @default("single") // single | group | project | global
+  target      String?
+  status      String   @default("pending") // pending | inprogress | completed | failed | rollback
+  progress    Float    @default(0)
+  total       Int      @default(0)
+  done        Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+// ─── Cameras ──────────────────────────────────────────────────────────
+model Camera {
+  id          String   @id @default(cuid())
+  name        String
+  location    String?
+  ip          String?
+  status      String   @default("online") // online | offline | recording
+  aiDetection Boolean  @default(false)
+  motionDetect Boolean @default(true)
+  recording   Boolean  @default(false)
+  resolution  String   @default("1080p")
+  createdAt   DateTime @default(now())
+}
+
+// ─── Automation ───────────────────────────────────────────────────────
+model AutomationFlow {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  trigger     String   // schedule | device-event | alarm | threshold | manual
+  enabled     Boolean  @default(true)
+  nodes       Int      @default(0)
+  lastRun     DateTime?
+  runCount    Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+// ─── Plugins ──────────────────────────────────────────────────────────
+model Plugin {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  version     String
+  author      String?
+  category    String   @default("industry") // industry | protocol | analytics | integration | visualization
+  installed   Boolean  @default(false)
+  enabled     Boolean  @default(false)
+  rating      Float    @default(0)
+  downloads   Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+// ─── Settings & Audit ─────────────────────────────────────────────────
+model Setting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+  category String @default("system")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  actor     String
+  action    String
+  target    String?
+  ip        String?
+  ts        DateTime @default(now())
+}
+
+// ─── SCADA Tags & Stations ────────────────────────────────────────────
+model ScadaStation {
+  id        String   @id @default(cuid())
+  name      String
+  protocol  String   @default("modbus-tcp") // modbus-tcp | modbus-rtu | opc-ua | ethernet-ip | bacnet
+  endpoint  String   // ip:port or opc-ua url
+  scanRateMs Int     @default(1000)
+  enabled   Boolean  @default(true)
+  status    String   @default("online") // online | offline | fault
+  tags      ScadaTag[]
+  createdAt DateTime @default(now())
+}
+
+model ScadaTag {
+  id         String   @id @default(cuid())
+  stationId  String
+  station    ScadaStation @relation(fields: [stationId], references: [id])
+  name       String   // e.g. Tank_Level, Motor_RPM
+  address    String   // modbus register 40001 / opc-ua node id
+  dataType   String   @default("float") // bool | int16 | uint16 | int32 | float | string
+  unit       String?
+  value      Float    @default(0)
+  quality    String   @default("good") // good | bad | uncertain
+  ts         DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([stationId])
+}
+
+// ─── OEE (per machine, per shift) ─────────────────────────────────────
+model OeeRecord {
+  id           String   @id @default(cuid())
+  machineName  String
+  lineName     String?
+  shift        String   @default("day") // day | night | afternoon
+  date         DateTime
+  availability Float    @default(0)
+  performance  Float    @default(0)
+  quality      Float    @default(0)
+  oee          Float    @default(0)
+  downtimeMin  Int      @default(0)
+  goodUnits    Int      @default(0)
+  totalUnits   Int      @default(0)
+  scrapUnits   Int      @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([machineName, date])
+}
+
+// ─── Recipes & Batches (MES) ──────────────────────────────────────────
+model Recipe {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  product     String?
+  version     String   @default("1.0")
+  status      String   @default("draft") // draft | approved | active | retired
+  yield       Int      @default(0)
+  unit        String   @default("units")
+  steps       Int      @default(0)
+  cycleTimeMin Int     @default(0)
+  batches     Batch[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Batch {
+  id          String   @id @default(cuid())
+  batchNo     String   @unique
+  recipeId    String
+  recipe      Recipe   @relation(fields: [recipeId], references: [id])
+  status      String   @default("planned") // planned | inprogress | completed | quarantined | scrapped
+  quantity    Int      @default(0)
+  goodQty     Int      @default(0)
+  scrapQty    Int      @default(0)
+  operator    String?
+  machineName String?
+  startTime   DateTime?
+  endTime     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── Inventory / Warehouse ────────────────────────────────────────────
+model InventoryItem {
+  id          String   @id @default(cuid())
+  sku         String   @unique
+  name        String
+  category    String   @default("raw") // raw | wip | finished | spare | consumable
+  unit        String   @default("pcs")
+  quantity    Float    @default(0)
+  reorderLevel Float   @default(0)
+  location    String?  // warehouse / bin
+  unitCost    Float    @default(0)
+  supplier    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ─── Webhooks ─────────────────────────────────────────────────────────
+model Webhook {
+  id          String   @id @default(cuid())
+  name        String
+  url         String
+  event       String   // alarm.created | device.offline | ota.completed | telemetry.threshold | workorder.created
+  secret      String?
+  enabled     Boolean  @default(true)
+  lastStatus  String?  // 200 | 500 | timeout
+  lastFired   DateTime?
+  deliveries  Int      @default(0)
+  failures    Int      @default(0)
+  createdAt   DateTime @default(now())
+}
