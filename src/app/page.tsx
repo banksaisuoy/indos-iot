@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, lazy, Suspense } from 'react'
+import { useEffect, useMemo, useRef, lazy, Suspense, memo } from 'react'
 import { Sidebar } from '@/components/indos/shell/sidebar'
 import { Topbar } from '@/components/indos/shell/topbar'
 import { CommandPalette } from '@/components/indos/shell/command-palette'
@@ -69,18 +69,25 @@ function ViewLoader() {
   )
 }
 
+const MemoSidebar = memo(Sidebar)
+const MemoTopbar = memo(Topbar)
+
 export default function Home() {
   const { view } = useIndOS()
   const rt = useRealtime()
-  const activeAlarms = rt.recentAlarms.filter(a => a.state === 'active').length
+  // Memoize activeAlarms so Sidebar only re-renders when the COUNT changes, not on every telemetry tick
+  const activeAlarms = useMemo(() => rt.recentAlarms.filter(a => a.state === 'active').length, [rt.recentAlarms])
 
   const View = useMemo(() => VIEW_MAP[view], [view])
 
-  // Toast on new critical alarms
+  // Toast on new critical alarms — track last toasted alarm id to prevent re-toast on ack
+  const lastToastedRef = useRef<string | null>(null)
   useEffect(() => {
     if (rt.recentAlarms.length === 0) return
     const latest = rt.recentAlarms[0]
+    if (latest.id === lastToastedRef.current) return
     if (Date.now() - new Date(latest.ts).getTime() > 5000) return
+    lastToastedRef.current = latest.id
     if (latest.severity === 'critical') {
       toast.error(latest.message, { description: `${latest.category} · ${new Date(latest.ts).toLocaleTimeString('en-GB', { hour12: false })}` })
     } else if (latest.severity === 'warning') {
@@ -91,9 +98,9 @@ export default function Home() {
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar activeAlarms={activeAlarms} />
+        <MemoSidebar activeAlarms={activeAlarms} />
         <div className="flex min-w-0 flex-1 flex-col">
-          <Topbar />
+          <MemoTopbar />
           <main className="indos-scroll flex-1 overflow-y-auto">
             <div className="indos-grid-bg min-h-full">
               <Suspense fallback={<ViewLoader />}>

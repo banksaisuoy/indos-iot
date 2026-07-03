@@ -1,0 +1,686 @@
+     1→     1→'use client'
+     2→     2→import { useEffect, useMemo, useState } from 'react'
+     3→     3→import { useRealtime } from '@/lib/indos/realtime'
+     4→     4→import { KpiCard } from '@/components/indos/shared/kpi-card'
+     5→     5→import { ViewHeader } from '@/components/indos/shared/view-header'
+     6→     6→import { StatusBadge } from '@/components/indos/shared/status-badge'
+     7→     7→import { LiveDot } from '@/components/indos/shared/charts'
+     8→     8→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+     9→     9→import { Badge } from '@/components/ui/badge'
+    10→    10→import { Button } from '@/components/ui/button'
+    11→    11→import { ScrollArea } from '@/components/ui/scroll-area'
+    12→    12→import { Separator } from '@/components/ui/separator'
+    13→    13→import { Skeleton } from '@/components/ui/skeleton'
+    14→    14→import {
+    15→    15→  Network, Factory, Building2, Boxes, Cpu, CircuitBoard, ChevronRight, ChevronDown,
+    16→    16→  Activity, Thermometer, Vibrate, Gauge, Power, ShieldAlert, Wifi, Settings2,
+    17→    17→  Crosshair, Layers, Server, Radar,
+    18→    18→} from 'lucide-react'
+    19→    19→import { cn } from '@/lib/utils'
+    20→    20→
+    21→    21→// ─── Types for /api/indos/topology ────────────────────────────────────────
+    22→    22→interface TDevice { id: string; name: string; type: string; status: string; metric?: string | null }
+    23→    23→interface TMachine { id: string; name: string; status: string; oee: number; availability?: number; performance?: number; quality?: number; model?: string | null; manufacturer?: string | null; serial?: string | null; devices: TDevice[] }
+    24→    24→interface TLine { id: string; name: string; machines: TMachine[] }
+    25→    25→interface TBuilding { id: string; name: string; lines: TLine[] }
+    26→    26→interface TFactory { id: string; name: string; location?: string | null; buildings: TBuilding[] }
+    27→    27→interface TProject { id: string; name: string; slug: string; category?: string; factories: TFactory[] }
+    28→    28→interface FlatProject { id: string; name: string; slug: string; category?: string; _count: { devices: number } }
+    29→    29→interface Topology { hierarchical: TProject[]; flat: FlatProject[] }
+    30→    30→
+    31→    31→type NodeKind = 'project' | 'factory' | 'building' | 'line' | 'machine' | 'device'
+    32→    32→interface Crumb { kind: NodeKind; name: string }
+    33→    33→interface SelectedMachine {
+    34→    34→  project: string
+    35→    35→  factory: string
+    36→    36→  building: string
+    37→    37→  line: string
+    38→    38→  machine: TMachine
+    39→    39→  crumbs: Crumb[]
+    40→    40→}
+    41→    41→
+    42→    42→const STATUS_DOT: Record<string, string> = {
+    43→    43→  running: 'bg-emerald-400', online: 'bg-emerald-400',
+    44→    44→  idle: 'bg-sky-400', maintenance: 'bg-amber-400',
+    45→    45→  fault: 'bg-rose-400', offline: 'bg-slate-500',
+    46→    46→}
+    47→    47→
+    48→    48→function statusDot(s: string) { return STATUS_DOT[s] || 'bg-slate-500' }
+    49→    49→
+    50→    50→// ─── Counts (recursive) ──────────────────────────────────────────────────
+    51→    51→function countAll(top: Topology) {
+    52→    52→  let f = 0, b = 0, l = 0, m = 0, d = 0
+    53→    53→  for (const p of top.hierarchical) {
+    54→    54→    for (const fac of p.factories) {
+    55→    55→      f++
+    56→    56→      for (const bld of fac.buildings) {
+    57→    57→        b++
+    58→    58→        for (const ln of bld.lines) {
+    59→    59→          l++
+    60→    60→          for (const mac of ln.machines) {
+    61→    61→            m++
+    62→    62→            d += mac.devices.length
+    63→    63→          }
+    64→    64→        }
+    65→    65→      }
+    66→    66→    }
+    67→    67→  }
+    68→    68→  for (const fp of top.flat) d += fp._count.devices
+    69→    69→  return { factories: f, buildings: b, lines: l, machines: m, devices: d }
+    70→    70→}
+    71→    71→
+    72→    72→// ─── Main component ──────────────────────────────────────────────────────
+    73→    73→export function DigitalTwinView() {
+    74→    74→  const rt = useRealtime()
+    75→    75→  const [top, setTop] = useState<Topology | null>(null)
+    76→    76→  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+    77→    77→  const [selected, setSelected] = useState<SelectedMachine | null>(null)
+    78→    78→
+    79→    79→  useEffect(() => {
+    80→    80→    fetch('/api/indos/topology').then(r => r.json()).then((d: Topology) => {
+    81→    81→      setTop(d)
+    82→    82→      // expand the first project + first factory by default
+    83→    83→      const first = d.hierarchical[0]
+    84→    84→      if (first) {
+    85→    85→        const s = new Set<string>([first.id])
+    86→    86→        if (first.factories[0]) {
+    87→    87→          s.add(first.factories[0].id)
+    88→    88→          if (first.factories[0].buildings[0]) {
+    89→    89→            s.add(first.factories[0].buildings[0].id)
+    90→    90→            const ln = first.factories[0].buildings[0].lines[0]
+    91→    91→            if (ln) {
+    92→    92→              s.add(ln.id)
+    93→    93→              const mac = ln.machines[0]
+    94→    94→              if (mac) {
+    95→    95→                s.add(mac.id)
+    96→    96→                setSelected({
+    97→    97→                  project: first.name, factory: first.factories[0].name,
+    98→    98→                  building: first.factories[0].buildings[0].name, line: ln.name,
+    99→    99→                  machine: mac,
+   100→   100→                  crumbs: [
+   101→   101→                    { kind: 'project', name: first.name },
+   102→   102→                    { kind: 'factory', name: first.factories[0].name },
+   103→   103→                    { kind: 'building', name: first.factories[0].buildings[0].name },
+   104→   104→                    { kind: 'line', name: ln.name },
+   105→   105→                    { kind: 'machine', name: mac.name },
+   106→   106→                  ],
+   107→   107→                })
+   108→   108→              }
+   109→   109→            }
+   110→   110→          }
+   111→   111→        }
+   112→   112→        setExpanded(s)
+   113→   113→      }
+   114→   114→    }).catch(() => {})
+   115→   115→  }, [])
+   116→   116→
+   117→   117→  const counts = useMemo(() => top ? countAll(top) : null, [top])
+   118→   118→
+   119→   119→  const toggle = (id: string) => {
+   120→   120→    setExpanded(prev => {
+   121→   121→      const n = new Set(prev)
+   122→   122→      if (n.has(id)) n.delete(id); else n.add(id)
+   123→   123→      return n
+   124→   124→    })
+   125→   125→  }
+   126→   126→
+   127→   127→  const selectMachine = (crumbs: Crumb[], machine: TMachine) => {
+   128→   128→    setSelected({
+   129→   129→      project: crumbs[0].name, factory: crumbs[1].name,
+   130→   130→      building: crumbs[2].name, line: crumbs[3].name,
+   131→   131→      machine, crumbs: [...crumbs, { kind: 'machine', name: machine.name }],
+   132→   132→    })
+   133→   133→  }
+   134→   134→
+   135→   135→  return (
+   136→   136→    <div className="space-y-5 p-4 sm:p-6">
+   137→   137→      <ViewHeader
+   138→   138→        title="Digital Twin"
+   139→   139→        description="Live spatial hierarchy of organizations, sites, lines and machines with SCADA-grade inspection."
+   140→   140→        icon={<Network className="h-5 w-5" />}
+   141→   141→        actions={
+   142→   142→          <>
+   143→   143→            <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+   144→   144→              <LiveDot color="bg-emerald-400" /> LIVE TWIN
+   145→   145→            </Badge>
+   146→   146→            <Button size="sm" variant="outline" className="h-8 gap-1.5">
+   147→   147→              <Layers className="h-3.5 w-3.5" /> 3D View
+   148→   148→            </Button>
+   149→   149→          </>
+   150→   150→        }
+   151→   151→      />
+   152→   152→
+   153→   153→      {/* KPI row */}
+   154→   154→      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
+   155→   155→        <KpiCard label="Factories" value={counts?.factories ?? '—'} icon={Factory} accent="emerald" hint="across all projects" />
+   156→   156→        <KpiCard label="Buildings" value={counts?.buildings ?? '—'} icon={Building2} accent="sky" hint="monitored structures" />
+   157→   157→        <KpiCard label="Production Lines" value={counts?.lines ?? '—'} icon={Boxes} accent="violet" hint="active assemblies" />
+   158→   158→        <KpiCard label="Machines" value={counts?.machines ?? '—'} icon={Cpu} accent="amber" hint="twin-enabled assets" />
+   159→   159→        <KpiCard label="Devices" value={counts?.devices ?? '—'} icon={CircuitBoard} accent="rose" hint="sensors & controllers" />
+   160→   160→      </div>
+   161→   161→
+   162→   162→      {/* Main grid: tree + detail */}
+   163→   163→      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+   164→   164→        {/* Tree panel */}
+   165→   165→        <Card className="flex h-[640px] flex-col overflow-hidden">
+   166→   166→          <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/60 px-4 py-3">
+   167→   167→            <div>
+   168→   168→              <CardTitle className="flex items-center gap-2 text-sm">
+   169→   169→                <Network className="h-4 w-4 text-primary" /> Asset Hierarchy
+   170→   170→              </CardTitle>
+   171→   171→              <CardDescription className="text-xs">Project → Factory → Building → Line → Machine → Device</CardDescription>
+   172→   172→            </div>
+   173→   173→            <Badge variant="outline" className="text-[10px]">{top?.hierarchical.length ?? 0} roots</Badge>
+   174→   174→          </CardHeader>
+   175→   175→          <CardContent className="flex-1 overflow-hidden p-0">
+   176→   176→            {!top ? (
+   177→   177→              <div className="space-y-2 p-3">
+   178→   178→                {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}
+   179→   179→              </div>
+   180→   180→            ) : (
+   181→   181→              <ScrollArea className="indos-scroll h-full">
+   182→   182→                <div className="p-2">
+   183→   183→                  {top.hierarchical.map(p => (
+   184→   184→                    <ProjectNode
+   185→   185→                      key={p.id}
+   186→   186→                      project={p}
+   187→   187→                      expanded={expanded}
+   188→   188→                      toggle={toggle}
+   189→   189→                      selected={selected?.machine.id ?? null}
+   190→   190→                      onSelect={selectMachine}
+   191→   191→                    />
+   192→   192→                  ))}
+   193→   193→                  {top.flat.length > 0 && (
+   194→   194→                    <>
+   195→   195→                      <div className="mt-3 flex items-center gap-2 px-2 py-1.5">
+   196→   196→                        <Separator className="flex-1" />
+   197→   197→                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground/70">Flat Projects</span>
+   198→   198→                        <Separator className="flex-1" />
+   199→   199→                      </div>
+   200→   200→                      <div className="space-y-1 px-1">
+   201→   201→                        {top.flat.map(fp => (
+   202→   202→                          <div key={fp.id} className="flex items-center gap-2 rounded-md border border-border/40 bg-card/40 px-2.5 py-2">
+   203→   203→                            <Factory className="h-3.5 w-3.5 text-muted-foreground" />
+   204→   204→                            <span className="flex-1 truncate text-xs font-medium">{fp.name}</span>
+   205→   205→                            <Badge variant="outline" className="text-[10px]">{fp._count.devices} devices</Badge>
+   206→   206→                          </div>
+   207→   207→                        ))}
+   208→   208→                      </div>
+   209→   209→                    </>
+   210→   210→                  )}
+   211→   211→                </div>
+   212→   212→              </ScrollArea>
+   213→   213→            )}
+   214→   214→          </CardContent>
+   215→   215→        </Card>
+   216→   216→
+   217→   217→        {/* Detail panel */}
+   218→   218→        <Card className="flex h-[640px] flex-col overflow-hidden">
+   219→   219→          {selected ? (
+   220→   220→            <ScadaPanel sel={selected} telemetry={rt.telemetry} />
+   221→   221→          ) : (
+   222→   222→            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+   223→   223→              {top ? 'Select a machine from the hierarchy to inspect its digital twin.' : 'Loading topology…'}
+   224→   224→            </div>
+   225→   225→          )}
+   226→   226→        </Card>
+   227→   227→      </div>
+   228→   228→    </div>
+   229→   229→  )
+   230→   230→}
+   231→   231→
+   232→   232→// ─── Tree nodes ──────────────────────────────────────────────────────────
+   233→   233→function ProjectNode({ project, expanded, toggle, selected, onSelect }: {
+   234→   234→  project: TProject
+   235→   235→  expanded: Set<string>
+   236→   236→  toggle: (id: string) => void
+   237→   237→  selected: string | null
+   238→   238→  onSelect: (crumbs: Crumb[], machine: TMachine) => void
+   239→   239→}) {
+   240→   240→  const open = expanded.has(project.id)
+   241→   241→  const deviceCount = project.factories.reduce((a, f) => a + f.buildings.reduce((b, bld) => b + bld.lines.reduce((c, l) => c + l.machines.reduce((d, m) => d + m.devices.length, 0), 0), 0), 0)
+   242→   242→  return (
+   243→   243→    <div className="space-y-0.5">
+   244→   244→      <Row
+   245→   245→        depth={0}
+   246→   246→        icon={Factory}
+   247→   247→        iconColor="text-emerald-400"
+   248→   248→        name={project.name}
+   249→   249→        sub={project.category}
+   250→   250→        count={project.factories.length}
+   251→   251→        countLabel="factories"
+   252→   252→        open={open}
+   253→   253→        hasChildren={project.factories.length > 0}
+   254→   254→        onToggle={() => toggle(project.id)}
+   255→   255→        dotColor="bg-emerald-400"
+   256→   256→      />
+   257→   257→      {open && (
+   258→   258→        <div>
+   259→   259→          {project.factories.map(f => (
+   260→   260→            <FactoryNode key={f.id} factory={f} expanded={expanded} toggle={toggle} selected={selected}
+   261→   261→              onSelect={(c, m) => onSelect([{ kind: 'project', name: project.name }, ...c], m)}
+   262→   262→              crumbs={[{ kind: 'project', name: project.name }]} />
+   263→   263→          ))}
+   264→   264→          {project.factories.length === 0 && (
+   265→   265→            <div className="py-1 pl-7 text-[11px] text-muted-foreground">No factories</div>
+   266→   266→          )}
+   267→   267→        </div>
+   268→   268→      )}
+   269→   269→      {deviceCount > 0 && (
+   270→   270→        <div className="pb-1 pl-7 text-[10px] text-muted-foreground/60">{deviceCount} devices linked</div>
+   271→   271→      )}
+   272→   272→    </div>
+   273→   273→  )
+   274→   274→}
+   275→   275→
+   276→   276→function FactoryNode({ factory, expanded, toggle, selected, onSelect, crumbs }: {
+   277→   277→  factory: TFactory
+   278→   278→  expanded: Set<string>
+   279→   279→  toggle: (id: string) => void
+   280→   280→  selected: string | null
+   281→   281→  onSelect: (c: Crumb[], m: TMachine) => void
+   282→   282→  crumbs: Crumb[]
+   283→   283→}) {
+   284→   284→  const open = expanded.has(factory.id)
+   285→   285→  const bcount = factory.buildings.length
+   286→   286→  return (
+   287→   287→    <div>
+   288→   288→      <Row
+   289→   289→        depth={1}
+   290→   290→        icon={Building2}
+   291→   291→        iconColor="text-sky-400"
+   292→   292→        name={factory.name}
+   293→   293→        sub={factory.location ?? undefined}
+   294→   294→        count={bcount}
+   295→   295→        countLabel="bldgs"
+   296→   296→        open={open}
+   297→   297→        hasChildren={bcount > 0}
+   298→   298→        onToggle={() => toggle(factory.id)}
+   299→   299→        dotColor="bg-sky-400"
+   300→   300→      />
+   301→   301→      {open && factory.buildings.map(b => (
+   302→   302→        <BuildingNode key={b.id} building={b} expanded={expanded} toggle={toggle} selected={selected}
+   303→   303→          onSelect={(c, m) => onSelect([...crumbs, { kind: 'factory', name: factory.name }], m)}
+   304→   304→          crumbs={[...crumbs, { kind: 'factory', name: factory.name }]} />
+   305→   305→      ))}
+   306→   306→    </div>
+   307→   307→  )
+   308→   308→}
+   309→   309→
+   310→   310→function BuildingNode({ building, expanded, toggle, selected, onSelect, crumbs }: {
+   311→   311→  building: TBuilding
+   312→   312→  expanded: Set<string>
+   313→   313→  toggle: (id: string) => void
+   314→   314→  selected: string | null
+   315→   315→  onSelect: (c: Crumb[], m: TMachine) => void
+   316→   316→  crumbs: Crumb[]
+   317→   317→}) {
+   318→   318→  const open = expanded.has(building.id)
+   319→   319→  return (
+   320→   320→    <div>
+   321→   321→      <Row
+   322→   322→        depth={2}
+   323→   323→        icon={Building2}
+   324→   324→        iconColor="text-violet-400"
+   325→   325→        name={building.name}
+   326→   326→        count={building.lines.length}
+   327→   327→        countLabel="lines"
+   328→   328→        open={open}
+   329→   329→        hasChildren={building.lines.length > 0}
+   330→   330→        onToggle={() => toggle(building.id)}
+   331→   331→        dotColor="bg-violet-400"
+   332→   332→      />
+   333→   333→      {open && building.lines.map(l => (
+   334→   334→        <LineNode key={l.id} line={l} expanded={expanded} toggle={toggle} selected={selected}
+   335→   335→          onSelect={(c, m) => onSelect([...crumbs, { kind: 'building', name: building.name }], m)}
+   336→   336→          crumbs={[...crumbs, { kind: 'building', name: building.name }]} />
+   337→   337→      ))}
+   338→   338→    </div>
+   339→   339→  )
+   340→   340→}
+   341→   341→
+   342→   342→function LineNode({ line, expanded, toggle, selected, onSelect, crumbs }: {
+   343→   343→  line: TLine
+   344→   344→  expanded: Set<string>
+   345→   345→  toggle: (id: string) => void
+   346→   346→  selected: string | null
+   347→   347→  onSelect: (c: Crumb[], m: TMachine) => void
+   348→   348→  crumbs: Crumb[]
+   349→   349→}) {
+   350→   350→  const open = expanded.has(line.id)
+   351→   351→  return (
+   352→   352→    <div>
+   353→   353→      <Row
+   354→   354→        depth={3}
+   355→   355→        icon={Boxes}
+   356→   356→        iconColor="text-amber-400"
+   357→   357→        name={line.name}
+   358→   358→        count={line.machines.length}
+   359→   359→        countLabel="machines"
+   360→   360→        open={open}
+   361→   361→        hasChildren={line.machines.length > 0}
+   362→   362→        onToggle={() => toggle(line.id)}
+   363→   363→        dotColor="bg-amber-400"
+   364→   364→      />
+   365→   365→      {open && line.machines.map(m => (
+   366→   366→        <MachineNode key={m.id} machine={m} expanded={expanded} toggle={toggle} selected={selected}
+   367→   367→          onSelect={() => onSelect([...crumbs, { kind: 'line', name: line.name }], m)}
+   368→   368→          isExpanded={expanded.has(m.id)} />
+   369→   369→      ))}
+   370→   370→    </div>
+   371→   371→  )
+   372→   372→}
+   373→   373→
+   374→   374→function MachineNode({ machine, expanded, toggle, selected, onSelect, isExpanded }: {
+   375→   375→  machine: TMachine
+   376→   376→  expanded: Set<string>
+   377→   377→  toggle: (id: string) => void
+   378→   378→  selected: string | null
+   379→   379→  onSelect: () => void
+   380→   380→  isExpanded: boolean
+   381→   381→}) {
+   382→   382→  const isSel = selected === machine.id
+   383→   383→  return (
+   384→   384→    <div>
+   385→   385→      <button
+   386→   386→        onClick={onSelect}
+   387→   387→        className={cn(
+   388→   388→          'group flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2 text-left text-xs transition-colors',
+   389→   389→          isSel ? 'bg-primary/12 ring-1 ring-primary/30' : 'hover:bg-sidebar-accent/50'
+   390→   390→        )}
+   391→   391→        style={{ paddingLeft: 4 + 4 * 14 }}
+   392→   392→      >
+   393→   393→        <span onClick={(e) => { e.stopPropagation(); toggle(machine.id) }} className="flex h-4 w-4 shrink-0 items-center justify-center rounded hover:bg-sidebar-accent">
+   394→   394→          {machine.devices.length > 0 ? (isExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />) : null}
+   395→   395→        </span>
+   396→   396→        <Cpu className={cn('h-3.5 w-3.5 shrink-0', isSel ? 'text-primary' : 'text-rose-400')} />
+   397→   397→        <span className={cn('truncate flex-1', isSel && 'font-medium text-primary')}>{machine.name}</span>
+   398→   398→        <Badge variant="outline" className="ml-1 h-4 gap-1 px-1 text-[9px] tnum" >
+   399→   399→          <Gauge className="h-2.5 w-2.5" /> {machine.oee.toFixed(0)}%
+   400→   400→        </Badge>
+   401→   401→        <StatusBadge status={machine.status} className="h-4 px-1.5 text-[9px]" />
+   402→   402→      </button>
+   403→   403→      {isExpanded && machine.devices.length > 0 && (
+   404→   404→        <div className="space-y-0.5 pb-1">
+   405→   405→          {machine.devices.map(d => (
+   406→   406→            <div key={d.id} className="flex items-center gap-2 rounded px-2 py-1 text-[11px] hover:bg-sidebar-accent/40"
+   407→   407→              style={{ marginLeft: 4 + 5 * 14 + 8 }}>
+   408→   408→              <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', statusDot(d.status))} />
+   409→   409→              <span className="truncate flex-1 text-muted-foreground">{d.name}</span>
+   410→   410→              <span className="text-[10px] uppercase text-muted-foreground/70">{d.type}</span>
+   411→   411→              <span className={cn('text-[9px] font-medium uppercase', statusDot(d.status).replace('bg-', 'text-'))}>{d.status}</span>
+   412→   412→            </div>
+   413→   413→          ))}
+   414→   414→        </div>
+   415→   415→      )}
+   416→   416→    </div>
+   417→   417→  )
+   418→   418→}
+   419→   419→
+   420→   420→function Row({ depth, icon: Icon, iconColor, name, sub, count, countLabel, open, hasChildren, onToggle, dotColor }: {
+   421→   421→  depth: number
+   422→   422→  icon: React.ComponentType<{ className?: string }>
+   423→   423→  iconColor: string
+   424→   424→  name: string
+   425→   425→  sub?: string
+   426→   426→  count: number
+   427→   427→  countLabel: string
+   428→   428→  open: boolean
+   429→   429→  hasChildren: boolean
+   430→   430→  onToggle: () => void
+   431→   431→  dotColor: string
+   432→   432→}) {
+   433→   433→  return (
+   434→   434→    <button
+   435→   435→      onClick={onToggle}
+   436→   436→      disabled={!hasChildren}
+   437→   437→      className={cn(
+   438→   438→        'group flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2 text-left text-xs transition-colors',
+   439→   439→        hasChildren ? 'hover:bg-sidebar-accent/50 cursor-pointer' : 'cursor-default'
+   440→   440→      )}
+   441→   441→      style={{ paddingLeft: 4 + depth * 14 }}
+   442→   442→    >
+   443→   443→      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+   444→   444→        {hasChildren ? (open ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />) : null}
+   445→   445→      </span>
+   446→   446→      <Icon className={cn('h-3.5 w-3.5 shrink-0', iconColor)} />
+   447→   447→      <span className="truncate flex-1 font-medium">{name}</span>
+   448→   448→      {sub && <span className="hidden truncate text-[10px] text-muted-foreground/70 sm:inline">{sub}</span>}
+   449→   449→      <span className={cn('h-1.5 w-1.5 rounded-full', dotColor)} />
+   450→   450→      <Badge variant="outline" className="h-4 px-1.5 text-[9px] tnum">{count} {countLabel}</Badge>
+   451→   451→    </button>
+   452→   452→  )
+   453→   453→}
+   454→   454→
+   455→   455→// ─── SCADA detail panel ──────────────────────────────────────────────────
+   456→   456→function ScadaPanel({ sel, telemetry }: { sel: SelectedMachine; telemetry: Record<string, any> }) {
+   457→   457→  const { machine, crumbs } = sel
+   458→   458→  // Tick live values
+   459→   459→  const [tick, setTick] = useState(0)
+   460→   460→  useEffect(() => {
+   461→   461→    const id = setInterval(() => setTick(t => t + 1), 1400)
+   462→   462→    return () => clearInterval(id)
+   463→   463→  }, [])
+   464→   464→
+   465→   465→  // Pick a base from OEE / status, then add small jitter
+   466→   466→  const baseRpm = machine.status === 'running' ? 2400 : machine.status === 'idle' ? 600 : 0
+   467→   467→  const rpm = baseRpm + (tick * 7 + 13) % 90 - 45
+   468→   468→  const temp = (machine.status === 'running' ? 68 : 38) + ((tick * 3) % 9) - 4 + Math.sin(tick / 3) * 2
+   469→   469→  const vib = (machine.status === 'running' ? 4.2 : 1.1) + Math.sin(tick / 2) * 0.6 + ((tick * 5) % 7) / 10
+   470→   470→  const output = machine.status === 'running' ? 120 + (tick * 11) % 18 : machine.status === 'idle' ? 12 : 0
+   471→   471→  const power = machine.status === 'running' ? 8.4 + Math.sin(tick / 4) * 0.5 : machine.status === 'idle' ? 1.2 : 0
+   472→   472→
+   473→   473→  // try to use a real telemetry value if available
+   474→   474→  const realTel = Object.values(telemetry).find((t: any) => machine.devices.some(d => d.id === t.deviceId)) as any | undefined
+   475→   475→
+   476→   476→  const LIGHT_HEX: Record<string, string> = {
+   477→   477→    'bg-emerald-400': '#34d399',
+   478→   478→    'bg-amber-400': '#fbbf24',
+   479→   479→    'bg-rose-400': '#fb7185',
+   480→   480→    'bg-sky-400': '#38bdf8',
+   481→   481→  }
+   482→   482→  const statusLight = (label: string, on: boolean, color: string) => (
+   483→   483→    <div className="flex flex-col items-center gap-1">
+   484→   484→      <span
+   485→   485→        className={cn('h-2.5 w-2.5 rounded-full ring-2 ring-offset-1 ring-offset-card', on ? color : 'bg-slate-700 ring-slate-700/40', on && 'pulse-dot')}
+   486→   486→        style={on ? { color: LIGHT_HEX[color] || '#34d399' } : undefined}
+   487→   487→      />
+   488→   488→      <span className="text-[9px] uppercase tracking-wider text-muted-foreground">{label}</span>
+   489→   489→    </div>
+   490→   490→  )
+   491→   491→
+   492→   492→  return (
+   493→   493→    <div className="flex h-full flex-col">
+   494→   494→      {/* Header with breadcrumbs */}
+   495→   495→      <div className="border-b border-border/60 px-4 py-3">
+   496→   496→        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground overflow-x-auto indos-scroll pb-1">
+   497→   497→          {crumbs.map((c, i) => (
+   498→   498→            <span key={i} className="flex items-center gap-1.5 whitespace-nowrap">
+   499→   499→              {i > 0 && <ChevronRight className="h-3 w-3" />}
+   500→   500→              <span className={cn(i === crumbs.length - 1 ? 'font-medium text-foreground' : '')}>{c.name}</span>
+   501→   501→            </span>
+   502→   502→          ))}
+   503→   503→        </div>
+   504→   504→        <div className="mt-2 flex items-center justify-between gap-2">
+   505→   505→          <div className="min-w-0">
+   506→   506→            <CardTitle className="flex items-center gap-2 text-base">
+   507→   507→              <Cpu className="h-4 w-4 text-primary" />
+   508→   508→              <span className="truncate">{machine.name}</span>
+   509→   509→            </CardTitle>
+   510→   510→            <CardDescription className="text-xs">
+   511→   511→              {[machine.manufacturer, machine.model, machine.serial && `SN: ${machine.serial}`].filter(Boolean).join(' · ') || 'Industrial asset'}
+   512→   512→            </CardDescription>
+   513→   513→          </div>
+   514→   514→          <div className="flex shrink-0 items-center gap-2">
+   515→   515→            <StatusBadge status={machine.status} />
+   516→   516→            <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+   517→   517→              <LiveDot color="bg-emerald-400" /> TWIN SYNC
+   518→   518→            </Badge>
+   519→   519→          </div>
+   520→   520→        </div>
+   521→   521→      </div>
+   522→   522→
+   523→   523→      {/* OEE strip */}
+   524→   524→      <div className="grid grid-cols-4 gap-px border-b border-border/60 bg-border/40">
+   525→   525→        {[
+   526→   526→          { label: 'OEE', val: machine.oee, color: 'text-primary' },
+   527→   527→          { label: 'Avail.', val: machine.availability ?? machine.oee * 0.95, color: 'text-sky-400' },
+   528→   528→          { label: 'Perf.', val: machine.performance ?? machine.oee * 1.02, color: 'text-amber-400' },
+   529→   529→          { label: 'Quality', val: machine.quality ?? 99.1, color: 'text-emerald-400' },
+   530→   530→        ].map(s => (
+   531→   531→          <div key={s.label} className="bg-card px-3 py-2.5">
+   532→   532→            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{s.label}</p>
+   533→   533→            <p className={cn('text-lg font-semibold tnum', s.color)}>{s.val.toFixed(1)}%</p>
+   534→   534→          </div>
+   535→   535→        ))}
+   536→   536→      </div>
+   537→   537→
+   538→   538→      {/* Schematic */}
+   539→   539→      <div className="flex-1 overflow-y-auto indos-scroll p-4">
+   540→   540→        <div className="relative overflow-hidden rounded-lg border border-border/60 bg-background/60 p-4">
+   541→   541→          {/* corner labels */}
+   542→   542→          <div className="pointer-events-none absolute left-2 top-2 text-[9px] font-mono uppercase tracking-widest text-muted-foreground/50">SCADA · HMI</div>
+   543→   543→          <div className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 text-[9px] font-mono text-muted-foreground/50">
+   544→   544→            <Radar className="h-2.5 w-2.5" /> {new Date().toLocaleTimeString('en-GB', { hour12: false })}
+   545→   545→          </div>
+   546→   546→
+   547→   547→          {/* The machine schematic */}
+   548→   548→          <div className="mt-5 grid grid-cols-12 gap-3">
+   549→   549→            {/* Motor block */}
+   550→   550→            <div className="col-span-12 sm:col-span-5 rounded-md border border-amber-500/20 bg-amber-500/5 p-3">
+   551→   551→              <div className="mb-2 flex items-center justify-between">
+   552→   552→                <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-amber-400">
+   553→   553→                  <Activity className="h-3 w-3" /> Drive Motor
+   554→   554→                </span>
+   555→   555→                <span className="text-[9px] font-mono text-muted-foreground">M-01</span>
+   556→   556→              </div>
+   557→   557→              <div className="flex items-center justify-center py-3">
+   558→   558→                <div className="relative h-24 w-24">
+   559→   559→                  {/* stator ring */}
+   560→   560→                  <div className="absolute inset-0 rounded-full border-4 border-amber-500/30" />
+   561→   561→                  <div className="absolute inset-2 rounded-full border-2 border-amber-500/20" />
+   562→   562→                  {/* rotor */}
+   563→   563→                  <div
+   564→   564→                    className="absolute inset-3 rounded-full border-2 border-dashed border-amber-400/60"
+   565→   565→                    style={{ animation: machine.status === 'running' ? 'spin 1.2s linear infinite' : machine.status === 'idle' ? 'spin 4s linear infinite' : 'none' }}
+   566→   566→                  >
+   567→   567→                    <div className="absolute left-1/2 top-0 h-3 w-1 -translate-x-1/2 rounded-full bg-amber-400" />
+   568→   568→                  </div>
+   569→   569→                  {/* center */}
+   570→   570→                  <div className="absolute inset-0 flex items-center justify-center">
+   571→   571→                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10 ring-1 ring-amber-500/40">
+   572→   572→                      <span className="text-[10px] font-mono font-semibold text-amber-400 tnum">{Math.max(0, rpm)}</span>
+   573→   573→                    </div>
+   574→   574→                  </div>
+   575→   575→                </div>
+   576→   576→              </div>
+   577→   577→              <div className="flex items-center justify-between text-[10px]">
+   578→   578→                <span className="text-muted-foreground">RPM</span>
+   579→   579→                <span className="font-mono font-semibold text-amber-400 tnum">{rpm.toFixed(0)}</span>
+   580→   580→              </div>
+   581→   581→            </div>
+   582→   582→
+   583→   583→            {/* Temperature gauge */}
+   584→   584→            <div className="col-span-6 sm:col-span-3 rounded-md border border-rose-500/20 bg-rose-500/5 p-3">
+   585→   585→              <div className="mb-2 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-rose-400">
+   586→   586→                <Thermometer className="h-3 w-3" /> Temp
+   587→   587→              </div>
+   588→   588→              <div className="flex flex-col items-center gap-1 py-2">
+   589→   589→                <div className="relative h-20 w-6 rounded-full bg-rose-500/10 ring-1 ring-rose-500/20">
+   590→   590→                  <div
+   591→   591→                    className="absolute bottom-0 left-0 right-0 rounded-full bg-gradient-to-t from-rose-500 to-rose-300 transition-all"
+   592→   592→                    style={{ height: `${Math.min(100, Math.max(0, (temp - 20) / 60 * 100))}%` }}
+   593→   593→                  />
+   594→   594→                  {/* tick marks */}
+   595→   595→                  {[25, 50, 75].map(p => (
+   596→   596→                    <div key={p} className="absolute left-full ml-0.5 text-[7px] text-muted-foreground" style={{ bottom: `${p}%` }}>—</div>
+   597→   597→                  ))}
+   598→   598→                </div>
+   599→   599→              </div>
+   600→   600→              <div className="flex items-center justify-between text-[10px]">
+   601→   601→                <span className="text-muted-foreground">°C</span>
+   602→   602→                <span className="font-mono font-semibold text-rose-400 tnum">{temp.toFixed(1)}</span>
+   603→   603→              </div>
+   604→   604→            </div>
+   605→   605→
+   606→   606→            {/* Vibration bars */}
+   607→   607→            <div className="col-span-6 sm:col-span-4 rounded-md border border-sky-500/20 bg-sky-500/5 p-3">
+   608→   608→              <div className="mb-2 flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-sky-400">
+   609→   609→                <Vibrate className="h-3 w-3" /> Vibration
+   610→   610→              </div>
+   611→   611→              <div className="flex h-20 items-end justify-around gap-1 py-2">
+   612→   612→                {Array.from({ length: 12 }).map((_, i) => {
+   613→   613→                  const h = machine.status === 'running'
+   614→   614→                    ? 30 + Math.abs(Math.sin((tick + i) / 2)) * 60 + (i % 3) * 5
+   615→   615→                    : machine.status === 'idle' ? 15 + Math.abs(Math.sin((tick + i) / 3)) * 20 : 4
+   616→   616→                  return (
+   617→   617→                    <div key={i} className="flex-1 rounded-t bg-gradient-to-t from-sky-500/40 to-sky-300 transition-all" style={{ height: `${Math.min(100, h)}%` }} />
+   618→   618→                  )
+   619→   619→                })}
+   620→   620→              </div>
+   621→   621→              <div className="flex items-center justify-between text-[10px]">
+   622→   622→                <span className="text-muted-foreground">mm/s RMS</span>
+   623→   623→                <span className="font-mono font-semibold text-sky-400 tnum">{vib.toFixed(2)}</span>
+   624→   624→              </div>
+   625→   625→            </div>
+   626→   626→          </div>
+   627→   627→
+   628→   628→          {/* Conveyor + output */}
+   629→   629→          <div className="mt-3 rounded-md border border-emerald-500/20 bg-emerald-500/5 p-3">
+   630→   630→            <div className="mb-2 flex items-center justify-between">
+   631→   631→              <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-emerald-400">
+   632→   632→                <Crosshair className="h-3 w-3" /> Production Output
+   633→   633→              </span>
+   634→   634→              <span className="font-mono text-xs font-semibold text-emerald-400 tnum">{output} <span className="text-[9px] text-muted-foreground">units/min</span></span>
+   635→   635→            </div>
+   636→   636→            <div className="relative h-8 overflow-hidden rounded bg-emerald-500/5 ring-1 ring-emerald-500/15">
+   637→   637→              <div className="absolute inset-0 flex items-center" style={{ animation: machine.status === 'running' ? 'indos-conveyor 4s linear infinite' : 'none' }}>
+   638→   638→                {Array.from({ length: 16 }).map((_, i) => (
+   639→   639→                  <div key={i} className="mx-1 h-5 w-5 shrink-0 rounded-sm bg-emerald-500/30 ring-1 ring-emerald-500/40" />
+   640→   640→                ))}
+   641→   641→              </div>
+   642→   642→              <div className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-emerald-500/10 to-transparent" />
+   643→   643→            </div>
+   644→   644→            <div className="mt-2 flex items-center justify-between text-[10px] text-muted-foreground">
+   645→   645→              <span>Power Draw: <span className="font-mono font-semibold text-amber-400 tnum">{power.toFixed(1)} kW</span></span>
+   646→   646→              {realTel && <span>Probe: <span className="font-mono text-emerald-400">{realTel.value.toFixed(1)} {realTel.unit}</span></span>}
+   647→   647→            </div>
+   648→   648→          </div>
+   649→   649→
+   650→   650→          {/* Status lights */}
+   651→   651→          <div className="mt-3 flex items-center justify-around rounded-md border border-border/60 bg-card/60 px-3 py-3">
+   652→   652→            {statusLight('POWER', machine.status !== 'offline', 'bg-emerald-400')}
+   653→   653→            {statusLight('RUN', machine.status === 'running', 'bg-emerald-400')}
+   654→   654→            {statusLight('IDLE', machine.status === 'idle', 'bg-sky-400')}
+   655→   655→            {statusLight('MAINT', machine.status === 'maintenance', 'bg-amber-400')}
+   656→   656→            {statusLight('FAULT', machine.status === 'fault', 'bg-rose-400')}
+   657→   657→            {statusLight('NET', true, 'bg-emerald-400')}
+   658→   658→          </div>
+   659→   659→        </div>
+   660→   660→
+   661→   661→        {/* Device tags */}
+   662→   662→        <div className="mt-3">
+   663→   663→          <div className="mb-2 flex items-center justify-between">
+   664→   664→            <p className="flex items-center gap-1.5 text-xs font-medium"><CircuitBoard className="h-3.5 w-3.5 text-primary" /> Attached Devices <Badge variant="outline" className="text-[9px]">{machine.devices.length}</Badge></p>
+   665→   665→            <Button size="sm" variant="ghost" className="h-7 gap-1 text-[11px]"><Settings2 className="h-3 w-3" /> Configure</Button>
+   666→   666→          </div>
+   667→   667→          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+   668→   668→            {machine.devices.length === 0 ? (
+   669→   669→              <div className="col-span-2 rounded-md border border-dashed border-border/60 py-4 text-center text-[11px] text-muted-foreground">No devices linked to this machine.</div>
+   670→   670→            ) : machine.devices.map(d => (
+   671→   671→              <div key={d.id} className="flex items-center gap-2 rounded-md border border-border/50 bg-card/40 px-2.5 py-1.5">
+   672→   672→                <span className={cn('h-1.5 w-1.5 rounded-full', statusDot(d.status))} />
+   673→   673→                <span className="truncate text-xs flex-1">{d.name}</span>
+   674→   674→                <Badge variant="outline" className="text-[9px]">{d.type}</Badge>
+   675→   675→                <span className="text-[9px] uppercase text-muted-foreground">{d.status}</span>
+   676→   676→              </div>
+   677→   677→            ))}
+   678→   678→          </div>
+   679→   679→        </div>
+   680→   680→      </div>
+   681→   681→
+   682→   682→      <style>{`@keyframes indos-conveyor { from { transform: translateX(0); } to { transform: translateX(-96px); } }`}</style>
+   683→   683→    </div>
+   684→   684→  )
+   685→   685→}
+   686→   686→

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import ZAI from 'z-ai-web-dev-sdk'
 import { db } from '@/lib/db'
+import { withErrorHandler, validateBody } from '@/lib/api'
+import { aiChatSchema } from '@/lib/indos/schemas'
 
 // IndOS AI Center — local-first industrial assistant (powered by z-ai LLM).
 // In production this maps to a self-hosted Ollama instance; here we use the
@@ -16,13 +18,13 @@ You help plant engineers, operators and managers reason about their industrial d
 
 When asked for numbers or status, give realistic, concrete figures and a short reasoning. Prefer Markdown with short sections and bullet points. Never invent that you are using OpenAI — you run on the local IndOS AI stack.`
 
-export async function POST(req: NextRequest) {
-  try {
-    const { messages } = await req.json()
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return NextResponse.json({ error: 'messages required' }, { status: 400 })
-    }
+export const POST = withErrorHandler(async (req: NextRequest) => {
+  const body = await req.json()
+  const v = validateBody(aiChatSchema, body)
+  if (!v.success) return v.error
+  const { messages } = v.data
 
+  try {
     // Pull a small live context snapshot to ground the assistant.
     const [deviceCount, activeAlarms, projectCount, woOpen] = await Promise.all([
       db.device.count(),
@@ -48,8 +50,8 @@ export async function POST(req: NextRequest) {
   } catch (e: any) {
     console.error('[indos-ai] error', e)
     return NextResponse.json(
-      { reply: '⚠️ The local AI engine could not be reached. Verify the Ollama service is running and the model is loaded.' },
-      { status: 200 }
+      { error: 'AI_UNAVAILABLE', reply: '⚠️ Local AI engine could not be reached. Verify Ollama service is running and the model is loaded.' },
+      { status: 503 }
     )
   }
-}
+})

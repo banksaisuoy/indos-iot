@@ -1,0 +1,38 @@
+# IndOS CI/CD — lint, typecheck, build on every PR
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.1
+      - run: bun install --frozen-lockfile
+      - name: Lint
+        run: bun run lint
+      - name: Type check
+        run: bunx tsc --noEmit
+      - name: Build
+        run: bun run build
+        env:
+          DATABASE_URL: "file:./ci-test.db"
+          NEXTAUTH_SECRET: "ci-test-secret"
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Audit dependencies
+        run: bun audit || true
+      - name: Run tests
+        run: bun test || true

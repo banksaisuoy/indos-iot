@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withErrorHandler, validateBody } from '@/lib/api'
+import { alarmPatchSchema } from '@/lib/indos/schemas'
 
-export async function GET(req: NextRequest) {
+export const GET = withErrorHandler(async (req: NextRequest) => {
   const { searchParams } = new URL(req.url)
   const state = searchParams.get('state')
   const severity = searchParams.get('severity')
@@ -15,10 +17,13 @@ export async function GET(req: NextRequest) {
     take: 100,
   })
   return NextResponse.json(alarms)
-}
+})
 
-export async function PATCH(req: NextRequest) {
-  const { id, state, ackedBy } = await req.json()
+export const PATCH = withErrorHandler(async (req: NextRequest) => {
+  const body = await req.json()
+  const v = validateBody(alarmPatchSchema, body)
+  if (!v.success) return v.error
+  const { id, state, ackedBy } = v.data
   const now = new Date()
   const updated = await db.alarm.update({
     where: { id },
@@ -30,4 +35,4 @@ export async function PATCH(req: NextRequest) {
     },
   })
   return NextResponse.json(updated)
-}
+})

@@ -38,6 +38,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
   organizations: 'Organizations & Users',
   settings: 'System Settings',
   audit: 'Audit Logs',
+  deployment: 'Deployment Guide',
 }
 
 export function Topbar() {

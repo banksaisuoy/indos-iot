@@ -20,11 +20,6 @@ export type ViewId =
   | 'organizations'
   | 'settings'
   | 'audit'
-  | 'scada'
-  | 'oee'
-  | 'recipes'
-  | 'inventory'
-  | 'webhooks'
   | 'deployment'
 
 export interface TelemetryPoint {

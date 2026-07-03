@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withErrorHandler, validateBody } from '@/lib/api'
+import { projectCreateSchema } from '@/lib/indos/schemas'
 
-export async function GET() {
+export const GET = withErrorHandler(async () => {
   const projects = await db.project.findMany({
     include: {
       _count: { select: { devices: true, alarms: true, workOrders: true, factories: true } },
@@ -11,24 +13,27 @@ export async function GET() {
     orderBy: { createdAt: 'desc' },
   })
   return NextResponse.json(projects)
-}
+})
 
-export async function POST(req: NextRequest) {
+export const POST = withErrorHandler(async (req: NextRequest) => {
   const body = await req.json()
-  const slug = body.name?.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  const v = validateBody(projectCreateSchema, body)
+  if (!v.success) return v.error
+  const { name, description, category, location, lat, lng, orgId, customerId } = v.data
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
   const created = await db.project.create({
     data: {
-      name: body.name,
+      name,
       slug: slug + '-' + Math.random().toString(36).slice(2, 6),
-      description: body.description || null,
-      category: body.category || 'general',
+      description: description ?? null,
+      category,
       status: 'active',
-      location: body.location || null,
-      lat: body.lat ?? null,
-      lng: body.lng ?? null,
-      orgId: body.orgId || null,
-      customerId: body.customerId || null,
+      location: location ?? null,
+      lat: lat ?? null,
+      lng: lng ?? null,
+      orgId: orgId || null,
+      customerId: customerId || null,
     },
   })
-  return NextResponse.json(created)
-}
+  return NextResponse.json(created, { status: 201 })
+})

@@ -1,70 +1,91 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withErrorHandler } from '@/lib/api'
 
-// Executive overview KPIs for the dashboard
-export async function GET() {
+// Executive overview KPIs — uses count/groupBy/aggregate (NOT findMany+JS filter)
+// to avoid loading entire tables into memory at scale.
+export const GET = withErrorHandler(async () => {
   const [
-    projects, devices, machines, alarms, workOrders,
-    cameras, gateways, plugins, users,
+    projectCount, projectByStatus, projectByCat,
+    deviceCount, deviceByStatus, protocolDist,
+    machineAgg, machineByStatus,
+    alarmByState, alarmByCatActive,
+    woByStatus, woCritical,
+    cameraCount, cameraByStatus,
+    gatewayCount, gatewayByStatus, gatewayAgg,
+    pluginCount, pluginEnabled,
+    userCount, userActive,
   ] = await Promise.all([
-    db.project.findMany({ select: { id: true, status: true, category: true } }),
-    db.device.findMany({ select: { id: true, status: true, type: true, protocol: true } }),
-    db.machine.findMany({ select: { id: true, status: true, oee: true, availability: true, performance: true, quality: true } }),
-    db.alarm.findMany({ select: { id: true, state: true, severity: true, category: true, createdAt: true } }),
-    db.workOrder.findMany({ select: { id: true, status: true, priority: true } }),
-    db.camera.findMany({ select: { id: true, status: true, recording: true } }),
-    db.gateway.findMany({ select: { id: true, status: true, deviceCount: true, uptime: true } }),
-    db.plugin.findMany({ select: { id: true, installed: true, enabled: true, category: true } }),
-    db.user.findMany({ select: { id: true, status: true, role: true } }),
+    db.project.count(),
+    db.project.groupBy({ by: ['status'], _count: true }),
+    db.project.groupBy({ by: ['category'], _count: true }),
+    db.device.count(),
+    db.device.groupBy({ by: ['status'], _count: true }),
+    db.device.groupBy({ by: ['protocol'], _count: true }),
+    db.machine.aggregate({ _avg: { oee: true, availability: true, performance: true, quality: true } }),
+    db.machine.groupBy({ by: ['status'], _count: true }),
+    db.alarm.groupBy({ by: ['state'], _count: true }),
+    db.alarm.groupBy({ by: ['category'], _count: true, where: { state: 'active' } }),
+    db.workOrder.groupBy({ by: ['status'], _count: true }),
+    db.workOrder.count({ where: { priority: 'critical', OR: [{ status: 'open' }, { status: 'inprogress' }] } }),
+    db.camera.count(),
+    db.camera.groupBy({ by: ['status'], _count: true }),
+    db.gateway.count(),
+    db.gateway.groupBy({ by: ['status'], _count: true }),
+    db.gateway.aggregate({ _avg: { uptime: true } }),
+    db.plugin.count(),
+    db.plugin.count({ where: { enabled: true } }),
+    db.user.count(),
+    db.user.count({ where: { status: 'active' } }),
   ])
 
-  const activeAlarms = alarms.filter(a => a.state === 'active')
-  const onlineDevices = devices.filter(d => d.status === 'online').length
-  const runningMachines = machines.filter(m => m.status === 'running').length
-  const openWO = workOrders.filter(w => w.status === 'open' || w.status === 'inprogress').length
-  const avgOee = machines.length ? machines.reduce((s, m) => s + (m.oee || 0), 0) / machines.length : 0
-  const onlineCameras = cameras.filter(c => c.status !== 'offline').length
-  const onlineGateways = gateways.filter(g => g.status === 'online').length
-  const enabledPlugins = plugins.filter(p => p.enabled).length
-  const activeUsers = users.filter(u => u.status === 'active').length
+  const toMap = (arr: { [k: string]: any }[], key: string, val = '_count') => {
+    const m: Record<string, number> = {}
+    for (const r of arr) m[r[key]] = r[val]
+    return m
+  }
 
-  const projectByCat: Record<string, number> = {}
-  for (const p of projects) projectByCat[p.category] = (projectByCat[p.category] || 0) + 1
+  const statusMap = (arr: { status: string; _count: number }[]) => {
+    const m: Record<string, number> = {}
+    for (const r of arr) m[r.status] = r._count
+    return m
+  }
 
-  const protocolDist: Record<string, number> = {}
-  for (const d of devices) protocolDist[d.protocol] = (protocolDist[d.protocol] || 0) + 1
-
-  const alarmByCat: Record<string, number> = {}
-  for (const a of activeAlarms) alarmByCat[a.category] = (alarmByCat[a.category] || 0) + 1
+  const devStatus = statusMap(deviceByStatus as any)
+  const macStatus = statusMap(machineByStatus as any)
+  const almState = statusMap(alarmByState as any)
+  const camStatus = statusMap(cameraByStatus as any)
+  const gwStatus = statusMap(gatewayByStatus as any)
+  const woStats = statusMap(woByStatus as any)
 
   return NextResponse.json({
     counts: {
-      projects: projects.length,
-      devices: devices.length,
-      onlineDevices,
-      machines: machines.length,
-      runningMachines,
-      activeAlarms: activeAlarms.length,
-      ackAlarms: alarms.filter(a => a.state === 'acknowledged').length,
-      resolvedAlarms: alarms.filter(a => a.state === 'resolved').length,
-      workOrders: workOrders.length,
-      openWorkOrders: openWO,
-      cameras: cameras.length,
-      onlineCameras,
-      gateways: gateways.length,
-      onlineGateways,
-      plugins: plugins.length,
-      enabledPlugins,
-      users: users.length,
-      activeUsers,
+      projects: projectCount,
+      devices: deviceCount,
+      onlineDevices: devStatus.online || 0,
+      machines: Object.values(macStatus).reduce((a, b) => a + b, 0),
+      runningMachines: macStatus.running || 0,
+      activeAlarms: almState.active || 0,
+      ackAlarms: almState.acknowledged || 0,
+      resolvedAlarms: almState.resolved || 0,
+      workOrders: Object.values(woStats).reduce((a, b) => a + b, 0),
+      openWorkOrders: (woStats.open || 0) + (woStats.inprogress || 0),
+      cameras: cameraCount,
+      onlineCameras: (camStatus.online || 0) + (camStatus.recording || 0),
+      gateways: gatewayCount,
+      onlineGateways: gwStatus.online || 0,
+      plugins: pluginCount,
+      enabledPlugins: pluginEnabled,
+      users: userCount,
+      activeUsers: userActive,
     },
-    avgOee: Number(avgOee.toFixed(1)),
-    availability: machines.length ? Number((machines.reduce((s, m) => s + (m.availability || 0), 0) / machines.length).toFixed(1)) : 0,
-    performance: machines.length ? Number((machines.reduce((s, m) => s + (m.performance || 0), 0) / machines.length).toFixed(1)) : 0,
-    quality: machines.length ? Number((machines.reduce((s, m) => s + (m.quality || 0), 0) / machines.length).toFixed(1)) : 0,
-    projectByCat,
-    protocolDist,
-    alarmByCat,
-    gatewayUptime: gateways.length ? Number((gateways.reduce((s, g) => s + (g.uptime || 0), 0) / gateways.length).toFixed(1)) : 0,
+    avgOee: Number((machineAgg._avg.oee || 0).toFixed(1)),
+    availability: Number((machineAgg._avg.availability || 0).toFixed(1)),
+    performance: Number((machineAgg._avg.performance || 0).toFixed(1)),
+    quality: Number((machineAgg._avg.quality || 0).toFixed(1)),
+    projectByCat: toMap(projectByCat as any[], 'category'),
+    protocolDist: toMap(protocolDist as any[], 'protocol'),
+    alarmByCat: toMap(alarmByCatActive as any[], 'category'),
+    gatewayUptime: Number((gatewayAgg._avg.uptime || 0).toFixed(1)),
   })
-}
+})

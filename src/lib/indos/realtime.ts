@@ -23,8 +23,7 @@ function getSocket(): Socket {
     socket = io(SOCKET_URL, {
       path: '/',
       transports: ['websocket', 'polling'],
-      // @ts-expect-error – query is valid on Manager options
-      query: { XTransformPort: '3030' },
+      query: { XTransformPort: '3030' } as any,
       reconnection: true,
       reconnectionDelay: 1200,
     })

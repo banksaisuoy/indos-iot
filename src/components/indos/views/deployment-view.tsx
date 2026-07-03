@@ -84,96 +84,118 @@ export function DeploymentView() {
                 <Code>{`#include <WiFi.h>
 #include <PubSubClient.h>
 #include <DHT.h>
+#include <esp_task_wdt.h>
 
 // ─── WiFi ──────────────────────────────────────
 const char* WIFI_SSID     = "YOUR_WIFI";
 const char* WIFI_PASSWORD = "YOUR_PASSWORD";
 
 // ─── IndOS MQTT Broker ─────────────────────────
-const char* MQTT_HOST = "${SERVER_IP}";   // IP เซิร์ฟเวอร์ IndOS
+const char* MQTT_HOST = "${SERVER_IP}";
 const int   MQTT_PORT = 1883;
 const char* DEVICE_ID = "esp32-sensor-01";
 
-// ─── Pins ──────────────────────────────────────
-#define DHT_PIN  4       // GPIO4
+#define DHT_PIN  4
 #define DHT_TYPE DHT22
-#define RELAY_PIN 5      // GPIO5 (รับคำสั่งจาก IndOS)
+#define RELAY_PIN 5
 
 DHT dht(DHT_PIN, DHT_TYPE);
 WiFiClient net;
 PubSubClient client(net);
 
+unsigned long lastReconnect = 0;
+unsigned long lastTelemetry = 0;
+
+// ─── Non-blocking WiFi connect with 20s timeout + watchdog ──
 void connectWiFi() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("WiFi");
-  while (WiFi.status() != WL_CONNECTED) { Serial.print("."); delay(400); }
+  unsigned long t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
+    Serial.print(".");
+    esp_task_wdt_reset();  // feed watchdog
+    delay(400);
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" ✗ WiFi failed — rebooting");
+    ESP.restart();
+  }
   Serial.println(" ✓ " + WiFi.localIP().toString());
 }
 
 void onCommand(char* topic, byte* payload, unsigned int len) {
-  // รับคำสั่งจาก IndOS เช่น {"cmd":"relay_on"}
-  String msg;
-  for (int i = 0; i < len; i++) msg += (char)payload[i];
-  Serial.println("CMD: " + msg);
-  if (msg.indexOf("relay_on") >= 0)  digitalWrite(RELAY_PIN, HIGH);
-  if (msg.indexOf("relay_off") >= 0) digitalWrite(RELAY_PIN, LOW);
+  char msg[128] = {0};
+  for (int i = 0; i < len && i < 127; i++) msg[i] = (char)payload[i];
+  Serial.printf("CMD: %s\\n", msg);
+  if (strstr(msg, "relay_on"))  digitalWrite(RELAY_PIN, HIGH);
+  if (strstr(msg, "relay_off")) digitalWrite(RELAY_PIN, LOW);
 }
 
-void connectMQTT() {
-  client.setServer(MQTT_HOST, MQTT_PORT);
-  client.setCallback(onCommand);
-  while (!client.connected()) {
-    Serial.print("MQTT");
-    if (client.connect(DEVICE_ID)) {
-      Serial.println(" ✓ connected to IndOS");
-      // subscribe รับคำสั่ง
-      client.subscribe("indos/devices/" + String(DEVICE_ID) + "/cmd");
-    } else { Serial.print("."); delay(2000); }
+// ─── Non-blocking MQTT connect with LWT + QoS 1 ──────────────
+bool connectMQTT() {
+  String willTopic = "indos/devices/" + String(DEVICE_ID) + "/status";
+  String willPayload = "{\\"status\\":\\"offline\\",\\"ts\\":0}";
+  bool ok = client.connect(
+    DEVICE_ID,           // clientId
+    willTopic.c_str(),   // LWT topic
+    1,                   // LWT QoS
+    true,                // LWT retain
+    willPayload.c_str()  // LWT payload
+  );
+  if (ok) {
+    Serial.println(" ✓ MQTT connected");
+    client.subscribe("indos/devices/esp32-sensor-01/cmd");
+    // Publish online status (retained)
+    char status[80];
+    snprintf(status, sizeof(status), "{\\"status\\":\\"online\\",\\"rssi\\":%d}", WiFi.RSSI());
+    client.publish(willTopic.c_str(), status, true);
   }
+  return ok;
 }
 
+// ─── Publish with static buffers (no heap fragmentation) + QoS 1 ──
 void publishTelemetry(const char* metric, float value, const char* unit) {
-  String topic = "indos/devices/" + String(DEVICE_ID) + "/telemetry";
-  String payload = "{\\"name\\":\\"" + String(DEVICE_ID) + "\\","
-                 + "\\"project\\":\\"bkk-energy\\","
-                 + "\\"metric\\":\\"" + String(metric) + "\\","
-                 + "\\"value\\":" + String(value, 2) + ","
-                 + "\\"unit\\":\\"" + String(unit) + "\\"}";
-  client.publish(topic.c_str(), payload.c_str());
-  Serial.println("→ " + topic + " : " + payload);
-}
-
-void publishHeartbeat() {
-  String topic = "indos/devices/" + String(DEVICE_ID) + "/heartbeat";
-  String payload = "{\\"name\\":\\"" + String(DEVICE_ID) + "\\","
-                 + "\\"status\\":\\"online\\","
-                 + "\\"rssi\\":" + String(WiFi.RSSI()) + ","
-                 + "\\"ip\\":\\"" + WiFi.localIP().toString() + "\\"]}";
-  client.publish(topic.c_str(), payload.c_str());
+  char topic[64];
+  snprintf(topic, sizeof(topic), "indos/devices/%s/telemetry", DEVICE_ID);
+  char payload[256];
+  snprintf(payload, sizeof(payload),
+    "{\\"name\\":\\"%s\\",\\"project\\":\\"bkk-energy\\",\\"metric\\":\\"%s\\",\\"value\\":%.2f,\\"unit\\":\\"%s\\"}",
+    DEVICE_ID, metric, value, unit);
+  client.publish(topic, payload, false, 1);  // QoS 1
+  Serial.printf("→ %s : %s\\n", topic, payload);
 }
 
 void setup() {
   Serial.begin(115200);
   dht.begin();
   pinMode(RELAY_PIN, OUTPUT);
+  esp_task_wdt_init(10, true);  // 10s watchdog
+  esp_task_wdt_add(NULL);
+  client.setServer(MQTT_HOST, MQTT_PORT);
+  client.setBufferSize(512);
+  client.setCallback(onCommand);
   connectWiFi();
   connectMQTT();
 }
 
-unsigned long lastTelemetry = 0;
 void loop() {
-  if (!client.connected()) connectMQTT();
+  esp_task_wdt_reset();
+  // Non-blocking reconnect — max once every 5 seconds
+  if (!client.connected() && millis() - lastReconnect > 5000) {
+    lastReconnect = millis();
+    connectMQTT();
+  }
   client.loop();
 
-  // ส่ง telemetry ทุก 5 วินาที
   if (millis() - lastTelemetry > 5000) {
     lastTelemetry = millis();
-    float t = dht.readTemperature();
-    float h = dht.readHumidity();
-    if (!isnan(t)) publishTelemetry("temperature", t, "°C");
-    if (!isnan(h)) publishTelemetry("humidity",    h, "%");
-    publishHeartbeat();
+    if (client.connected()) {
+      float t = dht.readTemperature();
+      float h = dht.readHumidity();
+      if (!isnan(t)) publishTelemetry("temperature", t, "°C");
+      if (!isnan(h)) publishTelemetry("humidity", h, "%");
+    }
   }
 }`}</Code>
               </div>
@@ -227,7 +249,7 @@ cp .env.example .env
 # 3. รันทั้งสแต็ก
 docker compose up -d`}</Code>
               </div>
-              <p className="text-xs text-muted-foreground">เข้าใช้ที่ <code className="font-mono text-primary">http://SERVER_IP:3000</code> · login: <code className="font-mono">admin@indos.io</code> / <code className="font-mono">indos123</code></p>
+              <p className="text-xs text-muted-foreground">เข้าใช้ที่ <code className="font-mono text-primary">http://SERVER_IP:3000</code> · สร้าง admin password แรกผ่าน env <code className="font-mono">ADMIN_PASSWORD</code> · เปลี่ยนรหัสผ่านทันทีหลัง login ครั้งแรก</p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -316,8 +338,13 @@ services:
     volumes: ["qdrantdata:/qdrant/storage"]
 
 volumes:
-  pgdata: influxdata: miniodata: grafanadata:
-  nodereddata: ollamadata: qdrantdata:`}</Code>
+  pgdata:
+  influxdata:
+  miniodata:
+  grafanadata:
+  nodereddata:
+  ollamadata:
+  qdrantdata:`}</Code>
             </CardContent>
           </Card>
         </TabsContent>

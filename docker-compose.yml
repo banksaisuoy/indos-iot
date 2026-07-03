@@ -1,0 +1,234 @@
+# IndOS — Production docker-compose
+# Self-hosted, enterprise-grade. All services pinned, healthchecked, resource-limited.
+version: "3.9"
+
+networks:
+  internal:    # DBs, cache, broker — NOT exposed to host
+    driver: bridge
+  edge:         # Only indos app + caddy + mosquitto
+    driver: bridge
+
+volumes:
+  pgdata:
+  influxdata:
+  miniodata:
+  grafanadata:
+  nodereddata:
+  ollamadata:
+  qdrantdata:
+  redodata:
+
+services:
+  indos:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks: [internal, edge]
+    ports: ["3000:3000"]
+    deploy:
+      resources:
+        limits: { memory: 1G, cpus: "2.0" }
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: indos
+      POSTGRES_USER: indos
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?must set DB_PASSWORD}
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    networks: [internal]
+    # NO host port — only reachable from internal network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U indos -d indos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "1.0" }
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: "0.5" }
+
+  influxdb:
+    image: influxdb:2.7
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: indos
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD:?must set}
+      DOCKER_INFLUXDB_INIT_ORG: indos
+      DOCKER_INFLUXDB_INIT_BUCKET: telemetry
+    volumes: ["influxdata:/var/lib/influxdb2"]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits: { memory: 1G, cpus: "1.0" }
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    networks: [internal, edge]
+    ports: ["1883:1883"]
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/broker/uptime' -C 1 -W 3 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { memory: 128M, cpus: "0.5" }
+
+  minio:
+    image: minio/minio:RELEASE.2024-09-13T20-26-02Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-indos}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:?must set}
+    volumes: ["miniodata:/data"]
+    networks: [internal]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "0.5" }
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    restart: unless-stopped
+    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro", "prometheus_data:/prometheus"]
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "0.5" }
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?must set}
+    volumes: ["grafanadata:/var/lib/grafana"]
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: "0.5" }
+
+  loki:
+    image: grafana/loki:3.2.0
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "0.5" }
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    restart: unless-stopped
+    volumes: ["./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro"]
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { memory: 128M, cpus: "0.25" }
+
+  node-red:
+    image: nodered/node-red:4.0.5
+    restart: unless-stopped
+    volumes: ["nodereddata:/data"]
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { memory: 256M, cpus: "0.5" }
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    restart: unless-stopped
+    command: ["start", "--optimized", "--db=postgres", "--db-url=jdbc:postgresql://postgres:5432/indos", "--db-username=indos", "--db-password=${DB_PASSWORD}", "--hostname=${KEYCLOAK_HOSTNAME}"]
+    environment:
+      KEYCLOAK_ADMIN: ${KC_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KC_PASSWORD:?must set}
+    networks: [internal, edge]
+    deploy:
+      resources:
+        limits: { memory: 1G, cpus: "1.0" }
+
+  ollama:
+    image: ollama/ollama:0.3.14
+    restart: unless-stopped
+    volumes: ["ollamadata:/root/.ollama"]
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { memory: 4G, cpus: "2.0" }
+
+  qdrant:
+    image: qdrant/qdrant:v1.11.0
+    restart: unless-stopped
+    volumes: ["qdrantdata:/qdrant/storage"]
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { memory: 512M, cpus: "0.5" }
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data", "caddy_config:/config"]
+    networks: [edge]
+    depends_on: [indos]
+    deploy:
+      resources:
+        limits: { memory: 128M, cpus: "0.25" }
+
+  # Daily backup service
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${DB_PASSWORD}
+    entrypoint: |
+      sh -c 'while true; do
+        echo "[$$(date)] Running backup...";
+        pg_dump -h postgres -U indos indos | gzip > /backups/indos_$$(date +%Y%m%d_%H%M%S).sql.gz;
+        find /backups -name "indos_*.sql.gz" -mtime +30 -delete;
+        echo "[$$(date)] Backup done. Sleeping 24h...";
+        sleep 86400;
+      done'
+    volumes: ["./backups:/backups"]
+    networks: [internal]
+    depends_on:
+      postgres: { condition: service_healthy }

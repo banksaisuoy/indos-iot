@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { withErrorHandler } from '@/lib/api'
 
 // Synthetic 24h series generator for monitoring/analytics views.
 // Deterministic-ish from a seed so refreshes are stable enough.
@@ -25,7 +26,7 @@ function gen(seed: number, base: number, amp: number, noise: number, points = 96
   return out
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withErrorHandler(async (req: NextRequest) => {
   const { searchParams } = new URL(req.url)
   const kind = searchParams.get('kind') || 'energy'
 
@@ -117,4 +118,4 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({ kind, series, kpis })
-}
+})

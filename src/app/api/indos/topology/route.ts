@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withErrorHandler } from '@/lib/api'
 
 // Digital twin topology tree: Projects → Factories → Buildings → Lines → Machines → Devices
-export async function GET() {
+export const GET = withErrorHandler(async () => {
   const projects = await db.project.findMany({
     where: { factories: { some: {} } },
     include: {
@@ -13,7 +14,7 @@ export async function GET() {
               lines: {
                 include: {
                   machines: {
-                    include: { devices: { select: { id: true, name: true, type: true, status: true, metric: true } } },
+                    include: { devices: { select: { id: true, name: true, type: true, status: true } } },
                   },
                 },
               },
@@ -32,4 +33,4 @@ export async function GET() {
   })
 
   return NextResponse.json({ hierarchical: projects, flat })
-}
+})

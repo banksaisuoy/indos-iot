@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withErrorHandler } from '@/lib/api'
 
-export async function GET(req: NextRequest) {
+export const GET = withErrorHandler(async (req: NextRequest) => {
   const { searchParams } = new URL(req.url)
   const project = searchParams.get('project')
   const type = searchParams.get('type')
@@ -18,4 +19,4 @@ export async function GET(req: NextRequest) {
     take: 200,
   })
   return NextResponse.json(devices)
-}
+})

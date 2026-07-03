@@ -1,10 +1,12 @@
 :81 {
-	@transform_port_query {
-		query XTransformPort=*
+	# SECURITY: Only allow XTransformPort=3030 (telemetry socket.io service).
+	# Previous config used XTransformPort=* which allowed SSRF to any internal port (Redis, Postgres, etc.).
+	@telemetry_port {
+		query XTransformPort=3030
 	}
 
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
+	handle @telemetry_port {
+		reverse_proxy localhost:3030 {
 			header_up Host {host}
 			header_up X-Forwarded-For {remote_host}
 			header_up X-Forwarded-Proto {scheme}

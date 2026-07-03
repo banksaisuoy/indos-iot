@@ -24,6 +24,9 @@ model User {
   twoFA       Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([status])
 }
 
 model Organization {
@@ -47,6 +50,8 @@ model Customer {
   org         Organization @relation(fields: [orgId], references: [id])
   projects    Project[]
   createdAt   DateTime @default(now())
+
+  @@index([orgId])
 }
 
 // ─── Project & Topology Hierarchy ─────────────────────────────────────
@@ -70,6 +75,11 @@ model Project {
   workOrders  WorkOrder[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([orgId])
+  @@index([customerId])
+  @@index([status])
+  @@index([category])
 }
 
 model Factory {
@@ -82,6 +92,8 @@ model Factory {
   lng         Float?
   buildings   Building[]
   createdAt   DateTime @default(now())
+
+  @@index([projectId])
 }
 
 model Building {
@@ -92,6 +104,8 @@ model Building {
   floors      String?
   lines       ProductionLine[]
   createdAt   DateTime @default(now())
+
+  @@index([factoryId])
 }
 
 model ProductionLine {
@@ -101,6 +115,8 @@ model ProductionLine {
   building    Building @relation(fields: [buildingId], references: [id])
   machines    Machine[]
   createdAt   DateTime @default(now())
+
+  @@index([buildingId])
 }
 
 model Machine {
@@ -118,6 +134,9 @@ model Machine {
   quality     Float    @default(0)
   devices     Device[]
   createdAt   DateTime @default(now())
+
+  @@index([lineId])
+  @@index([status])
 }
 
 // ─── Devices & Edge ───────────────────────────────────────────────────
@@ -146,6 +165,12 @@ model Device {
   updatedAt   DateTime @updatedAt
   telemetry   Telemetry[]
   alarms      Alarm[]
+
+  @@index([projectId])
+  @@index([machineId])
+  @@index([status])
+  @@index([type])
+  @@index([lastSeen])
 }
 
 model Gateway {
@@ -202,6 +227,11 @@ model Alarm {
   createdAt   DateTime @default(now())
 
   @@index([state, severity])
+
+  @@index([deviceId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@index([category])
 }
 
 model Notification {
@@ -229,6 +259,11 @@ model WorkOrder {
   dueDate     DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
 }
 
 // ─── OTA Firmware ─────────────────────────────────────────────────────
@@ -315,6 +350,10 @@ model AuditLog {
   target    String?
   ip        String?
   ts        DateTime @default(now())
+
+  @@index([ts])
+  @@index([actor])
+  @@index([action])
 }
 
 // ─── SCADA Tags & Stations ────────────────────────────────────────────

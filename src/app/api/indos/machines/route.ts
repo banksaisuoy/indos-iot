@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { withErrorHandler } from '@/lib/api'
 
-export async function GET() {
+export const GET = withErrorHandler(async () => {
   const machines = await db.machine.findMany({
     include: {
       line: {
@@ -20,4 +21,4 @@ export async function GET() {
     orderBy: { name: 'asc' },
   })
   return NextResponse.json(machines)
-}
+})

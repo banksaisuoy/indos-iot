@@ -1,2 +1,10 @@
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-export async function GET() { const o = await db.organization.findMany({ include: { _count: { select: { users: true, projects: true, customers: true } } } }); return Response.json(o) }
+import { withErrorHandler } from '@/lib/api'
+
+export const GET = withErrorHandler(async () => {
+  const o = await db.organization.findMany({
+    include: { _count: { select: { users: true, projects: true, customers: true } } },
+  })
+  return NextResponse.json(o)
+})
