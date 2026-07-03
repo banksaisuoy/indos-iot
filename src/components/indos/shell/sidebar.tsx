@@ -8,7 +8,7 @@ import {
   LayoutDashboard, FolderKanban, Cpu, Radio, Zap, Leaf, Bell, Wrench,
   BarChart3, Network, MapPin, Camera, RefreshCw, Workflow, Bot, FileText,
   Puzzle, Building2, ScrollText, Settings, Activity, CircuitBoard, ShieldCheck,
-  ChevronLeft, ChevronRight, Server,
+  ChevronLeft, ChevronRight, Server, Rocket,
 } from 'lucide-react'
 import { LiveDot } from '@/components/indos/shared/charts'
 
@@ -74,6 +74,7 @@ const NAV: NavGroup[] = [
       { id: 'plugins', label: 'Plugin Marketplace', icon: Puzzle },
       { id: 'organizations', label: 'Organizations', icon: Building2 },
       { id: 'audit', label: 'Audit Logs', icon: ScrollText },
+      { id: 'deployment', label: 'Deployment Guide', icon: Rocket },
       { id: 'settings', label: 'System Settings', icon: Settings },
     ],
   },

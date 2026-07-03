@@ -31,6 +31,7 @@ const PluginsView = lazy(() => import('@/components/indos/views/plugins-view').t
 const OrganizationsView = lazy(() => import('@/components/indos/views/organizations-view').then(m => ({ default: m.OrganizationsView })))
 const AuditView = lazy(() => import('@/components/indos/views/audit-view').then(m => ({ default: m.AuditView })))
 const SettingsView = lazy(() => import('@/components/indos/views/settings-view').then(m => ({ default: m.SettingsView })))
+const DeploymentView = lazy(() => import('@/components/indos/views/deployment-view').then(m => ({ default: m.DeploymentView })))
 
 const VIEW_MAP: Record<ViewId, React.LazyExoticComponent<React.ComponentType>> = {
   dashboard: DashboardView,
@@ -53,6 +54,7 @@ const VIEW_MAP: Record<ViewId, React.LazyExoticComponent<React.ComponentType>> =
   organizations: OrganizationsView,
   audit: AuditView,
   settings: SettingsView,
+  deployment: DeploymentView,
 }
 
 function ViewLoader() {
