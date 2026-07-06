@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { withErrorHandler, validateBody } from '@/lib/api'
 import { projectCreateSchema } from '@/lib/indos/schemas'
+import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
+import { cacheDel } from '@/lib/cache'
 
-export const GET = withErrorHandler(async () => {
+// GET: List projects (any authenticated user)
+export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async () => {
   const projects = await db.project.findMany({
     include: {
       _count: { select: { devices: true, alarms: true, workOrders: true, factories: true } },
@@ -13,9 +16,10 @@ export const GET = withErrorHandler(async () => {
     orderBy: { createdAt: 'desc' },
   })
   return NextResponse.json(projects)
-})
+}))
 
-export const POST = withErrorHandler(async (req: NextRequest) => {
+// POST: Create project (engineer+)
+export const POST = withErrorHandler(apiHandler('engineer', RATE_LIMITS.write, async (req) => {
   const body = await req.json()
   const v = validateBody(projectCreateSchema, body)
   if (!v.success) return v.error
@@ -36,4 +40,5 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     },
   })
   return NextResponse.json(created, { status: 201 })
-})
+  // Note: cache invalidation for overview happens via TTL (30s)
+}))

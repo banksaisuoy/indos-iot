@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { withErrorHandler } from '@/lib/api'
+import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
 
-export const GET = withErrorHandler(async () => {
-  const c = await db.camera.findMany({ orderBy: { name: 'asc' } })
-  return NextResponse.json(c)
-})
+export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async () => {
+  return NextResponse.json(await db.camera.findMany({ orderBy: { name: 'asc' } }))
+}))

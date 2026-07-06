@@ -237,7 +237,11 @@ broker.on('publish', (packet, client) => {
     console.log(`[indos-mqtt] 📨 ${topic} = ${value} ${unit} (from ${client.id})`)
     // Persist to InfluxDB (if configured)
     persistTelemetry({ deviceId: client.id, name, project, metric, unit, value })
-    io.emit('telemetry', [{ deviceId: `mqtt:${client.id}:${topic}`, name, project, metric, unit, value, ts: new Date().toISOString(), source: 'mqtt', topic }])
+    // Send to project room only (not all clients)
+    const telemetryData = [{ deviceId: `mqtt:${client.id}:${topic}`, name, project, metric, unit, value, ts: new Date().toISOString(), source: 'mqtt', topic }]
+    io.to(`project:${project}`).emit('telemetry', telemetryData)
+    // Also send to a "global" room for dashboard-wide views
+    io.to('global').emit('telemetry', telemetryData)
   }
 })
 
@@ -284,19 +288,63 @@ function broadcastTick() {
     d.temperature = Math.max(22, Math.min(92, d.temperature + (Math.random()-0.5)*1.5))
     d.signal = Math.max(20, Math.min(100, d.signal + (Math.random()-0.5)*3))
   }
-  io.emit('telemetry', batch)
-  if (tick % 5 === 0) io.emit('device-vitals', simDevices.slice(0,24).map((d) => ({ id: d.id, name: d.name, status: d.status, cpu: Number(d.cpu.toFixed(1)), memory: Number(d.memory.toFixed(1)), temperature: Number(d.temperature.toFixed(1)), signal: Number(d.signal.toFixed(1)) })))
-  if (tick % 11 === 0) { const tpl = alarmTemplates[Math.floor(Math.random()*alarmTemplates.length)]; const d = simDevices[Math.floor(Math.random()*simDevices.length)]; io.emit('alarm', { id: `alm-${Date.now()}`, deviceId: d.id, project: d.project, severity: tpl.severity, category: tpl.category, message: tpl.message(d), state: 'active', ts: new Date().toISOString() }) }
-  if (tick % 3 === 0) io.emit('system-metrics', { mqttThroughput: 1200 + Math.round(Math.sin(tick/10)*300 + Math.random()*120) + mqttMsgCount, activeConnections: 320 + Math.round(Math.sin(tick/14)*40 + Math.random()*20) + mqttClientCount, apiLatencyMs: Number((42 + Math.random()*18).toFixed(1)), dbPoolPct: Number((35 + Math.random()*25).toFixed(1)), cpuPct: Number((28 + Math.sin(tick/8)*12 + Math.random()*6).toFixed(1)), memPct: Number((54 + Math.sin(tick/11)*8 + Math.random()*4).toFixed(1)), diskPct: Number((61 + Math.random()*2).toFixed(1)), netInMbps: Number((180 + Math.random()*60).toFixed(1)), netOutMbps: Number((120 + Math.random()*40).toFixed(1)), mqttConnected: mqttClientCount > 0, mqttClients: mqttClientCount, mqttMessages: mqttMsgCount, ts: new Date().toISOString() })
+  // Send telemetry to project rooms + global room (not all clients)
+  if (batch.length > 0) {
+    // Group by project for targeted delivery
+    const byProject: Record<string, any[]> = {}
+    for (const b of batch) {
+      (byProject[b.project] ||= []).push(b)
+    }
+    for (const [proj, items] of Object.entries(byProject)) {
+      io.to(`project:${proj}`).emit('telemetry', items)
+    }
+    // Global room gets the full batch (dashboard overview)
+    io.to('global').emit('telemetry', batch)
+  }
+  if (tick % 5 === 0) io.to('global').emit('device-vitals', simDevices.slice(0,24).map((d) => ({ id: d.id, name: d.name, status: d.status, cpu: Number(d.cpu.toFixed(1)), memory: Number(d.memory.toFixed(1)), temperature: Number(d.temperature.toFixed(1)), signal: Number(d.signal.toFixed(1)) })))
+  if (tick % 11 === 0) { const tpl = alarmTemplates[Math.floor(Math.random()*alarmTemplates.length)]; const d = simDevices[Math.floor(Math.random()*simDevices.length)]; io.to('global').emit('alarm', { id: `alm-${Date.now()}`, deviceId: d.id, project: d.project, severity: tpl.severity, category: tpl.category, message: tpl.message(d), state: 'active', ts: new Date().toISOString() }) }
+  if (tick % 3 === 0) io.to('global').emit('system-metrics', { mqttThroughput: 1200 + Math.round(Math.sin(tick/10)*300 + Math.random()*120) + mqttMsgCount, activeConnections: 320 + Math.round(Math.sin(tick/14)*40 + Math.random()*20) + mqttClientCount, apiLatencyMs: Number((42 + Math.random()*18).toFixed(1)), dbPoolPct: Number((35 + Math.random()*25).toFixed(1)), cpuPct: Number((28 + Math.sin(tick/8)*12 + Math.random()*6).toFixed(1)), memPct: Number((54 + Math.sin(tick/11)*8 + Math.random()*4).toFixed(1)), diskPct: Number((61 + Math.random()*2).toFixed(1)), netInMbps: Number((180 + Math.random()*60).toFixed(1)), netOutMbps: Number((120 + Math.random()*40).toFixed(1)), mqttConnected: mqttClientCount > 0, mqttClients: mqttClientCount, mqttMessages: mqttMsgCount, ts: new Date().toISOString() })
 }
 setInterval(broadcastTick, 1500)
 
 io.on('connection', (socket) => {
   console.log(`[indos-telemetry] ws client connected: ${socket.id}`)
+
+  // Auto-join global room (for dashboard overview, system metrics, alarms)
+  socket.join('global')
+
+  // Support project-scoped subscriptions
+  // Client emits: socket.emit('subscribe', { project: 'bkk-energy' })
+  socket.on('subscribe', (data: { project?: string; projects?: string[] }) => {
+    if (data.project) {
+      socket.join(`project:${data.project}`)
+      console.log(`[indos-telemetry] ${socket.id} joined project:${data.project}`)
+    }
+    if (data.projects) {
+      for (const p of data.projects) {
+        socket.join(`project:${p}`)
+      }
+      console.log(`[indos-telemetry] ${socket.id} joined ${data.projects.length} project rooms`)
+    }
+  })
+
+  // Unsubscribe from a project
+  socket.on('unsubscribe', (data: { project?: string }) => {
+    if (data.project) {
+      socket.leave(`project:${data.project}`)
+    }
+  })
+
+  // Send initial snapshot (only to this socket)
   socket.emit('telemetry', simDevices.slice(0,24).map((d) => ({ deviceId: d.id, name: d.name, project: d.project, metric: d.metric, unit: d.unit, value: sample(d, tick), ts: new Date().toISOString(), source: 'sim' })))
   socket.emit('device-vitals', simDevices.slice(0,24).map((d) => ({ id: d.id, name: d.name, status: d.status, cpu: Number(d.cpu.toFixed(1)), memory: Number(d.memory.toFixed(1)), temperature: Number(d.temperature.toFixed(1)), signal: Number(d.signal.toFixed(1)) })))
-  socket.on('ack-alarm', (id: string) => io.emit('alarm-update', { id, state: 'acknowledged', ackedBy: 'operator', ts: new Date().toISOString() }))
-  socket.on('disconnect', () => console.log(`[indos-telemetry] ws client disconnected: ${socket.id}`))
+
+  // Ack alarm — broadcast to global room
+  socket.on('ack-alarm', (id: string) => io.to('global').emit('alarm-update', { id, state: 'acknowledged', ackedBy: 'operator', ts: new Date().toISOString() }))
+
+  socket.on('disconnect', () => {
+    console.log(`[indos-telemetry] ws client disconnected: ${socket.id}`)
+  })
 })
 
 httpServer.listen(IO_PORT, () => console.log(`[indos-telemetry] ✅ socket.io listening on :${IO_PORT}`))

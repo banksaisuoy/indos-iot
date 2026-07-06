@@ -3,6 +3,7 @@ import ZAI from 'z-ai-web-dev-sdk'
 import { db } from '@/lib/db'
 import { withErrorHandler, validateBody } from '@/lib/api'
 import { aiChatSchema } from '@/lib/indos/schemas'
+import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
 
 // IndOS AI Center — local-first industrial assistant (powered by z-ai LLM).
 // In production this maps to a self-hosted Ollama instance; here we use the
@@ -18,7 +19,7 @@ You help plant engineers, operators and managers reason about their industrial d
 
 When asked for numbers or status, give realistic, concrete figures and a short reasoning. Prefer Markdown with short sections and bullet points. Never invent that you are using OpenAI — you run on the local IndOS AI stack.`
 
-export const POST = withErrorHandler(async (req: NextRequest) => {
+export const POST = withErrorHandler(apiHandler('viewer', RATE_LIMITS.ai, async (req) => {
   const body = await req.json()
   const v = validateBody(aiChatSchema, body)
   if (!v.success) return v.error
@@ -54,4 +55,4 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       { status: 503 }
     )
   }
-})
+}))

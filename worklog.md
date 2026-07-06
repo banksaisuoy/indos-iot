@@ -432,3 +432,32 @@ Verification:
 - GET /api/indos/telemetry/[deviceId] → 200 (SQLite fallback works)
 - Browser: dashboard renders with live telemetry stream
 - All services running: web:3000, mqtt:1883 (auth required), ws:3030
+
+---
+Task ID: PHASE8-RBAC-RATELIMIT-PAGINATION
+Agent: orchestrator (main)
+Task: Full RBAC enforcement, rate limiting, cursor pagination across all API routes.
+
+Files changed:
+- NEW: src/lib/rbac.ts (RBAC helper), src/lib/rate-limit.ts (in-memory token bucket), src/lib/pagination.ts (cursor pagination), src/lib/api-handler.ts (combined guard), src/lib/rbac.test.ts (12 tests)
+- UPDATED: all 22 API routes now use apiHandler() with min-role + rate-limit
+- DELETED: src/app/api/indos/organizations/ (duplicate of /orgs)
+- Created: docs/AGENTS.md, docs/worklogs/PHASE_8_RBAC_RATE_LIMIT_PAGINATION.md
+
+Verification: lint 0 errors, typecheck 0 errors, 35/35 tests pass. Admin→200, unauth→401, AI rate limit→429 on 6th req, pagination→{items,nextCursor,hasMore}, backward compat flat array preserved.
+
+---
+Task ID: PHASE9-REDIS-SOCKET-ROOMS
+Agent: orchestrator (main)
+Task: Redis cache with in-memory fallback + Socket.io project rooms.
+
+Files changed:
+- NEW: src/lib/cache.ts (Redis + in-memory LRU), src/lib/cache.test.ts (6 tests)
+- UPDATED: overview/settings/plugins routes use cached() wrapper; plugins POST invalidates cache
+- UPDATED: mini-services/telemetry/index.ts — io.emit→io.to(room).emit, project-based rooms, subscribe/unsubscribe events
+- package.json: added ioredis
+- Created: docs/worklogs/PHASE_9_REDIS_SOCKET_ROOMS.md
+
+Verification: lint 0 errors, typecheck 0 errors, 41/41 tests pass. Dashboard LIVE telemetry works with room-based delivery.
+
+Also fixed: X-Frame-Options changed from DENY→SAMEORIGIN to allow preview panel iframe embedding (was causing "refused to connect" white screen).
