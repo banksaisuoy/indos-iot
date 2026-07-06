@@ -13,6 +13,56 @@ import { Aedes } from 'aedes'
 import bcrypt from 'bcryptjs'
 import { readFileSync, existsSync } from 'fs'
 import { join } from 'path'
+import { InfluxDB, Point } from '@influxdata/influxdb-client'
+
+// ── InfluxDB configuration ────────────────────────────────────────────
+const INFLUX_URL = process.env.INFLUX_URL || ''
+const INFLUX_TOKEN = process.env.INFLUX_TOKEN || ''
+const INFLUX_ORG = process.env.INFLUX_ORG || 'indos'
+const INFLUX_BUCKET = process.env.INFLUX_BUCKET || 'telemetry'
+
+let influxWriteApi: any = null
+let influxAvailable = false
+
+function initInflux() {
+  if (!INFLUX_URL || !INFLUX_TOKEN) {
+    console.log('[influx] Not configured — telemetry will stream live only (no persistence)')
+    return
+  }
+  try {
+    const influx = new InfluxDB({ url: INFLUX_URL, token: INFLUX_TOKEN })
+    influxWriteApi = influx.getWriteApi(INFLUX_ORG, INFLUX_BUCKET, 'ms')
+    influxAvailable = true
+    console.log(`[influx] ✅ Connected to InfluxDB at ${INFLUX_URL} (bucket: ${INFLUX_BUCKET})`)
+  } catch (e: any) {
+    console.warn('[influx] Failed to connect:', e.message)
+  }
+}
+initInflux()
+
+function persistTelemetry(params: { deviceId: string; name: string; project: string; metric: string; unit: string; value: number }) {
+  if (!influxWriteApi) return
+  try {
+    const point = new Point('telemetry')
+      .tag('deviceId', params.deviceId)
+      .tag('project', params.project)
+      .tag('metric', params.metric)
+      .tag('unit', params.unit)
+      .tag('name', params.name)
+      .floatField('value', params.value)
+      .timestamp(new Date())
+    influxWriteApi.writePoint(point)
+  } catch (e: any) {
+    // Non-fatal — live stream still works
+  }
+}
+
+// Flush InfluxDB writes every 5 seconds (batch)
+if (influxAvailable) {
+  setInterval(async () => {
+    try { await influxWriteApi.flush() } catch {}
+  }, 5000)
+}
 
 const IO_PORT = 3030
 const MQTT_PORT = 1883
@@ -185,6 +235,8 @@ broker.on('publish', (packet, client) => {
   }
   if (value !== null) {
     console.log(`[indos-mqtt] 📨 ${topic} = ${value} ${unit} (from ${client.id})`)
+    // Persist to InfluxDB (if configured)
+    persistTelemetry({ deviceId: client.id, name, project, metric, unit, value })
     io.emit('telemetry', [{ deviceId: `mqtt:${client.id}:${topic}`, name, project, metric, unit, value, ts: new Date().toISOString(), source: 'mqtt', topic }])
   }
 })
@@ -220,7 +272,18 @@ function sample(d: VDevice, t: number): number { const wave = Math.sin(t/9 + d.p
 function broadcastTick() {
   tick++
   const batch: any[] = []
-  for (let i = 0; i < 12; i++) { const d = simDevices[(tick*12 + i) % simDevices.length]; if (d.status === 'offline') continue; batch.push({ deviceId: d.id, name: d.name, project: d.project, metric: d.metric, unit: d.unit, value: sample(d, tick), ts: new Date().toISOString(), source: 'sim' }); d.cpu = Math.max(5, Math.min(98, d.cpu + (Math.random()-0.5)*4)); d.memory = Math.max(10, Math.min(96, d.memory + (Math.random()-0.5)*2)); d.temperature = Math.max(22, Math.min(92, d.temperature + (Math.random()-0.5)*1.5)); d.signal = Math.max(20, Math.min(100, d.signal + (Math.random()-0.5)*3)) }
+  for (let i = 0; i < 12; i++) {
+    const d = simDevices[(tick*12 + i) % simDevices.length]
+    if (d.status === 'offline') continue
+    const val = sample(d, tick)
+    batch.push({ deviceId: d.id, name: d.name, project: d.project, metric: d.metric, unit: d.unit, value: val, ts: new Date().toISOString(), source: 'sim' })
+    // Persist simulation telemetry to InfluxDB (if configured)
+    persistTelemetry({ deviceId: d.id, name: d.name, project: d.project, metric: d.metric, unit: d.unit, value: val })
+    d.cpu = Math.max(5, Math.min(98, d.cpu + (Math.random()-0.5)*4))
+    d.memory = Math.max(10, Math.min(96, d.memory + (Math.random()-0.5)*2))
+    d.temperature = Math.max(22, Math.min(92, d.temperature + (Math.random()-0.5)*1.5))
+    d.signal = Math.max(20, Math.min(100, d.signal + (Math.random()-0.5)*3))
+  }
   io.emit('telemetry', batch)
   if (tick % 5 === 0) io.emit('device-vitals', simDevices.slice(0,24).map((d) => ({ id: d.id, name: d.name, status: d.status, cpu: Number(d.cpu.toFixed(1)), memory: Number(d.memory.toFixed(1)), temperature: Number(d.temperature.toFixed(1)), signal: Number(d.signal.toFixed(1)) })))
   if (tick % 11 === 0) { const tpl = alarmTemplates[Math.floor(Math.random()*alarmTemplates.length)]; const d = simDevices[Math.floor(Math.random()*simDevices.length)]; io.emit('alarm', { id: `alm-${Date.now()}`, deviceId: d.id, project: d.project, severity: tpl.severity, category: tpl.category, message: tpl.message(d), state: 'active', ts: new Date().toISOString() }) }

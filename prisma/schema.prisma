@@ -269,15 +269,22 @@ model WorkOrder {
 
 // ─── OTA Firmware ─────────────────────────────────────────────────────
 model Firmware {
-  id          String   @id @default(cuid())
-  version     String
-  deviceType  String
-  checksum    String?
-  sizeKb      Int      @default(0)
-  notes       String?
-  status      String   @default("stable") // draft | stable | deprecated
-  createdAt   DateTime @default(now())
-  jobs        OtaJob[]
+  id           String   @id @default(cuid())
+  version      String
+  deviceType   String
+  checksum     String?  // sha256:hex...
+  sizeKb       Int      @default(0)
+  notes        String?
+  status       String   @default("stable") // draft | stable | deprecated
+  url          String?  // firmware binary download URL
+  signature    String?  // Ed25519 signature (base64) of the manifest
+  signingKeyId String?  // identifier of the key used to sign
+  manifest     String?  // JSON manifest (for device fetch)
+  createdAt    DateTime @default(now())
+  jobs         OtaJob[]
+
+  @@index([deviceType])
+  @@index([status])
 }
 
 model OtaJob {
@@ -290,7 +297,11 @@ model OtaJob {
   progress    Float    @default(0)
   total       Int      @default(0)
   done        Int      @default(0)
+  signedBy    String?  // email of the user who dispatched
   createdAt   DateTime @default(now())
+
+  @@index([firmwareId])
+  @@index([status])
 }
 
 // ─── Cameras ──────────────────────────────────────────────────────────

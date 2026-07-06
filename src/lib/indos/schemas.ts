@@ -97,3 +97,20 @@ export const aiChatSchema = z.object({
     content: z.string().max(8000),
   })).min(1).max(30),
 })
+
+// ─── OTA Firmware Schemas ────────────────────────────────────────────
+export const firmwareRegisterSchema = z.object({
+  version: z.string().min(1).max(50),
+  deviceType: z.string().min(1).max(50),
+  url: z.string().url().max(2000),
+  sizeKb: z.number().int().min(0),
+  notes: z.string().max(2000).optional().nullable(),
+  checksum: z.string().max(128).optional().nullable(), // auto-computed if omitted
+  status: z.enum(['draft', 'stable', 'deprecated']).optional().default('draft'),
+})
+
+export const otaDeploySchema = z.object({
+  firmwareId: z.string().min(1),
+  scope: z.enum(['single', 'group', 'project', 'global']),
+  target: z.string().max(200).optional().nullable(),
+})

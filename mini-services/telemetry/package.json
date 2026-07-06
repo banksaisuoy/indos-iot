@@ -5,6 +5,7 @@
     "dev": "bun --hot index.ts"
   },
   "dependencies": {
+    "@influxdata/influxdb-client": "^1.35.0",
     "aedes": "^1.1.1",
     "bcryptjs": "^3.0.3",
     "socket.io": "4.8.3"

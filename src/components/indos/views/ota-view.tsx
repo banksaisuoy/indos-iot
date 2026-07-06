@@ -86,23 +86,17 @@ export function OtaView() {
     fetch('/api/indos/ota').then(r => r.json()).then(setJobs).catch(() => setJobs([]))
   }, [])
 
-  // Animate in-progress jobs subtly
+  // Animate in-progress jobs subtly (real progress comes from device reporting via PATCH /api/indos/ota)
   useEffect(() => {
     if (!jobs) return
     const active = jobs.some(j => j.status === 'inprogress')
     if (!active) return
+    // Poll for real status updates every 5 seconds instead of faking progress
     const t = setInterval(() => {
-      setJobs(prev =>
-        prev
-          ? prev.map(j => {
-              if (j.status !== 'inprogress') return j
-              const next = Math.min(100, j.progress + Math.random() * 4)
-              const newDone = Math.min(j.total, Math.round((next / 100) * j.total))
-              return { ...j, progress: next, done: newDone }
-            })
-          : prev,
-      )
-    }, 1800)
+      fetch('/api/indos/ota').then(r => r.json()).then((data: OtaJob[]) => {
+        if (Array.isArray(data)) setJobs(data)
+      }).catch(() => {})
+    }, 5000)
     return () => clearInterval(t)
   }, [jobs])
 
@@ -133,36 +127,49 @@ export function OtaView() {
   function confirmDeploy() {
     if (!deployFw) return
     setOpening(true)
-    const total = scope === 'global' ? 184 : scope === 'project' ? 42 : scope === 'group' ? 12 : 1
-    const newJob: OtaJob = {
-      id: 'local-' + Math.random().toString(36).slice(2, 9),
-      firmwareId: deployFw.id,
-      scope,
-      target: target || (scope === 'global' ? 'all-fleet' : scope === 'project' ? 'plant-a' : 'device-001'),
-      status: 'inprogress',
-      progress: 2,
-      total,
-      done: 0,
-      createdAt: new Date().toISOString(),
-      firmware: { version: deployFw.version, deviceType: deployFw.deviceType },
-    }
-    setTimeout(() => {
-      setJobs(prev => [newJob, ...(prev || [])])
-      setOpening(false)
-      setDeployFw(null)
-      toast.success('OTA job dispatched', {
-        description: `${deployFw.version} → ${scope} · ${newJob.target} (${total} device${total > 1 ? 's' : ''})`,
+    // Call the real OTA deploy API — creates a signed, audit-logged job
+    fetch('/api/indos/ota', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ firmwareId: deployFw.id, scope, target: target || null }),
+    })
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
       })
-    }, 700)
+      .then((newJob: OtaJob) => {
+        setJobs(prev => [newJob, ...(prev || [])])
+        setOpening(false)
+        setDeployFw(null)
+        toast.success('OTA job dispatched (signed)', {
+          description: `${deployFw.version} → ${scope} · ${target || 'all'} · manifest signed + audit logged`,
+        })
+        // Refresh firmware list to show updated job count
+        fetch('/api/indos/firmware').then(r => r.json()).then(setFirmware).catch(() => {})
+      })
+      .catch(err => {
+        setOpening(false)
+        toast.error('Failed to dispatch OTA job', { description: err.message })
+      })
   }
 
   function rollback(job: OtaJob) {
-    toast('Rollback queued', {
-      description: `Reverting ${job.firmware?.version} on ${job.target} → previous stable build`,
+    // Call the real PATCH API to mark job as rollback
+    fetch('/api/indos/ota', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: job.id, status: 'rollback', progress: 100 }),
     })
-    setJobs(prev =>
-      prev ? prev.map(j => (j.id === job.id ? { ...j, status: 'rollback', progress: 100 } : j)) : prev,
-    )
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(() => {
+        toast.success('Rollback initiated', {
+          description: `Reverting ${job.firmware?.version} on ${job.target} → previous stable build`,
+        })
+        setJobs(prev =>
+          prev ? prev.map(j => (j.id === job.id ? { ...j, status: 'rollback', progress: 100 } : j)) : prev,
+        )
+      })
+      .catch(err => toast.error('Rollback failed', { description: err.message }))
   }
 
   return (

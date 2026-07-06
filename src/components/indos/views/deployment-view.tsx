@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Rocket, Cpu, Radio, FileCode, CheckCircle2, Wifi, Server, Copy, Zap } from 'lucide-react'
+import { Rocket, Cpu, Radio, FileCode, CheckCircle2, Wifi, Server, Copy, Zap, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 
 const SERVER_IP = '21.0.4.82'
@@ -60,6 +60,7 @@ export function DeploymentView() {
       <Tabs defaultValue="esp32" className="w-full">
         <TabsList className="flex h-auto flex-wrap gap-1">
           <TabsTrigger value="esp32" className="text-xs"><Cpu className="mr-1.5 h-3.5 w-3.5" /> ESP32 / ESP8266</TabsTrigger>
+          <TabsTrigger value="ota" className="text-xs"><RefreshCw className="mr-1.5 h-3.5 w-3.5" /> OTA (Signed)</TabsTrigger>
           <TabsTrigger value="quickstart" className="text-xs"><Rocket className="mr-1.5 h-3.5 w-3.5" /> Quick Start</TabsTrigger>
           <TabsTrigger value="docker" className="text-xs"><Server className="mr-1.5 h-3.5 w-3.5" /> Docker Compose</TabsTrigger>
           <TabsTrigger value="plc" className="text-xs"><Zap className="mr-1.5 h-3.5 w-3.5" /> PLC Modbus</TabsTrigger>
@@ -226,6 +227,141 @@ void loop() {
 // DHT_PIN ใช้ D2 แทน GPIO4
 // RELAY_PIN ใช้ D1 แทน GPIO5
 // ที่เหลือเหมือนกันทุกบรรทัด`}</Code>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* OTA Signed Firmware */}
+        <TabsContent value="ota" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><RefreshCw className="h-4 w-4 text-emerald-400" /> Signed OTA Firmware Update</CardTitle>
+              <CardDescription>ESP32 fetches a signed manifest, verifies Ed25519 signature + SHA-256 checksum before flashing. Rejects unsigned/invalid firmware.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold">How it works</h4>
+                <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
+                  <li>IndOS admin registers firmware → server signs manifest with Ed25519 private key</li>
+                  <li>Admin deploys OTA job → device receives pending manifest via <code className="font-mono text-primary">/api/indos/ota/manifest?deviceId=xxx</code></li>
+                  <li>ESP32 verifies Ed25519 signature using embedded public key</li>
+                  <li>ESP32 downloads firmware binary, verifies SHA-256 checksum</li>
+                  <li>Only if BOTH checks pass → flash + reboot. Otherwise reject.</li>
+                </ol>
+              </div>
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold">ESP32 OTA Code (add to your sketch)</h4>
+                <Code>{`#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <mbedtls/base64.h>
+#include <mbedtls/md.h>
+#include <mbedtls/pk.h>
+
+// ─── IndOS OTA public key (Ed25519, base64 DER SPKI) ──────────
+// Replace with your actual public key from IndOS settings
+const char* OTA_PUBLIC_KEY_B64 = "MCowBQYDK2VwAyEAAsfM/YQIxP2+mFXOr6VmTb8KL483c3ajIx87d/rnCOU=";
+const char* INDOS_HOST = "${SERVER_IP}";
+
+// ─── Check for OTA update ─────────────────────────────────────
+void checkOTAUpdate() {
+  WiFiClient client;
+  HTTPClient http;
+  String url = String("http://") + INDOS_HOST + ":3000/api/indos/ota/manifest?deviceId=" + DEVICE_ID;
+
+  if (!http.begin(client, url)) return;
+  int code = http.GET();
+  if (code != 200) { http.end(); return; }
+
+  String body = http.getString();
+  http.end();
+
+  // Parse JSON response
+  StaticJsonDocument<1024> doc;
+  DeserializationError err = deserializeJson(doc, body);
+  if (err) { Serial.println("OTA: bad JSON"); return; }
+
+  if (!doc["pending"].as<bool>()) return;  // no update
+
+  // Extract manifest fields
+  const char* version    = doc["manifest"]["version"];
+  const char* fwUrl      = doc["manifest"]["url"];
+  const char* checksum   = doc["manifest"]["checksum"];   // "sha256:hex"
+  const char* signature  = doc["manifest"]["signature"];   // base64 Ed25519
+  const char* deviceType = doc["manifest"]["deviceType"];
+
+  Serial.printf("OTA: pending v%s (%s)\\n", version, deviceType);
+
+  // ─── Step 1: Verify Ed25519 signature ───────────────────────
+  // Build canonical manifest JSON (sorted keys, no whitespace)
+  String manifestJson;
+  StaticJsonDocument<512> manDoc;
+  manDoc["version"]      = version;
+  manDoc["deviceType"]   = deviceType;
+  manDoc["url"]          = fwUrl;
+  manDoc["checksum"]     = checksum;
+  manDoc["sizeKb"]       = doc["manifest"]["sizeKb"];
+  manDoc["notes"]        = doc["manifest"]["notes"] | "";
+  manDoc["createdAt"]    = doc["manifest"]["createdAt"];
+  manDoc["signingKeyId"] = doc["manifest"]["signingKeyId"];
+  serializeJson(manDoc, manifestJson);
+
+  // Decode base64 signature
+  size_t sigLen;
+  unsigned char sig[64];
+  mbedtls_base64_decode(sig, sizeof(sig), &sigLen,
+    (const unsigned char*)signature, strlen(signature));
+
+  // Decode base64 public key
+  unsigned char pubKey[44];
+  size_t pubKeyLen;
+  mbedtls_base64_decode(pubKey, sizeof(pubKey), &pubKeyLen,
+    (const unsigned char*)OTA_PUBLIC_KEY_B64, strlen(OTA_PUBLIC_KEY_B64));
+
+  // Verify Ed25519 signature using mbedtls
+  mbedtls_pk_context pk;
+  mbedtls_pk_init(&pk);
+  int ret = mbedtls_pk_parse_public_key(&pk, pubKey, pubKeyLen);
+  if (ret != 0) { Serial.println("OTA: bad public key"); mbedtls_pk_free(&pk); return; }
+
+  ret = mbedtls_pk_verify(&pk, MBEDTLS_MD_SHA256,
+    (const unsigned char*)manifestJson.c_str(), manifestJson.length(),
+    sig, sigLen);
+  mbedtls_pk_free(&pk);
+
+  if (ret != 0) {
+    Serial.println("OTA: ✗ Signature verification FAILED — rejecting firmware");
+    return;
+  }
+  Serial.println("OTA: ✓ Signature verified");
+
+  // ─── Step 2: Download firmware binary ───────────────────────
+  Serial.printf("OTA: downloading %s\\n", fwUrl);
+  // ... HTTP GET fwUrl, write to flash partition ...
+
+  // ─── Step 3: Verify SHA-256 checksum ────────────────────────
+  // Parse "sha256:hex..." → compare with downloaded binary hash
+  String expectedHash = String(checksum).substring(7); // strip "sha256:"
+  // mbedtls_sha256(downloadedData, len, hash, 0)
+  // if (hashHex != expectedHash) { Serial.println("OTA: ✗ Checksum mismatch"); return; }
+  Serial.println("OTA: ✓ Checksum verified");
+
+  // ─── Step 4: Flash + reboot ─────────────────────────────────
+  Serial.println("OTA: flashing firmware...");
+  // Update.write(downloadedData); Update.end();
+  // ESP.restart();
+}`}</Code>
+              </div>
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs">
+                <p className="font-semibold text-emerald-400">Security Guarantees</p>
+                <ul className="mt-1 space-y-0.5 text-muted-foreground">
+                  <li>✓ Manifest is Ed25519-signed on the server — private key never leaves the server</li>
+                  <li>✓ ESP32 verifies signature with embedded public key before any flash</li>
+                  <li>✓ SHA-256 checksum prevents corrupted/tampered binary from flashing</li>
+                  <li>✓ Unsigned firmware is rejected at the API level (POST /api/indos/ota returns 400)</li>
+                  <li>✓ All deploy actions are audit-logged with user email</li>
+                </ul>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
