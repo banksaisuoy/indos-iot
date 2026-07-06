@@ -52,3 +52,15 @@ prompt
 server.log
 # Skills directory
 /skills/
+# IndOS specific
+db/*.db
+db/*.db-journal
+mini-services/telemetry/devices.json
+mini-services/telemetry/node_modules/
+backups/
+mosquitto-passwd
+*.pem
+*.key
+agent-ctx/
+.env
+db/
