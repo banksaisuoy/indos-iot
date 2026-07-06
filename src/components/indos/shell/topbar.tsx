@@ -40,6 +40,7 @@ const VIEW_TITLES: Record<ViewId, string> = {
   settings: 'System Settings',
   audit: 'Audit Logs',
   deployment: 'Deployment Guide',
+  duckfarm: 'Duck Farm Controller',
 }
 
 export function Topbar() {

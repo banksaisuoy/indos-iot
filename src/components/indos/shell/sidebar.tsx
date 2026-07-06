@@ -8,7 +8,7 @@ import {
   LayoutDashboard, FolderKanban, Cpu, Radio, Zap, Leaf, Bell, Wrench,
   BarChart3, Network, MapPin, Camera, RefreshCw, Workflow, Bot, FileText,
   Puzzle, Building2, ScrollText, Settings, Activity, CircuitBoard, ShieldCheck,
-  ChevronLeft, ChevronRight, Server, Rocket,
+  ChevronLeft, ChevronRight, Server, Rocket, Wind,
 } from 'lucide-react'
 import { LiveDot } from '@/components/indos/shared/charts'
 
@@ -59,6 +59,12 @@ const NAV: NavGroup[] = [
     items: [
       { id: 'automation', label: 'Automation Flows', icon: Workflow },
       { id: 'ota', label: 'OTA Firmware', icon: RefreshCw },
+    ],
+  },
+  {
+    title: 'Farm Solutions',
+    items: [
+      { id: 'duckfarm', label: 'Duck Farm', icon: Wind },
     ],
   },
   {

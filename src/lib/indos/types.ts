@@ -21,6 +21,7 @@ export type ViewId =
   | 'settings'
   | 'audit'
   | 'deployment'
+  | 'duckfarm'
 
 export interface TelemetryPoint {
   deviceId: string
