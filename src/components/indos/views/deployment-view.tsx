@@ -90,10 +90,12 @@ export function DeploymentView() {
 const char* WIFI_SSID     = "YOUR_WIFI";
 const char* WIFI_PASSWORD = "YOUR_PASSWORD";
 
-// ─── IndOS MQTT Broker ─────────────────────────
-const char* MQTT_HOST = "${SERVER_IP}";
-const int   MQTT_PORT = 1883;
-const char* DEVICE_ID = "esp32-sensor-01";
+// ─── IndOS MQTT Broker (AUTH REQUIRED) ─────────
+const char* MQTT_HOST     = "${SERVER_IP}";
+const int   MQTT_PORT     = 1883;
+const char* DEVICE_ID     = "esp32-sensor-01";
+const char* MQTT_USER     = "esp32-sensor-01";        // device username (from IndOS device registry)
+const char* MQTT_PASSWORD = "indos-device-001";        // device password (set during provisioning)
 
 #define DHT_PIN  4
 #define DHT_TYPE DHT22
@@ -132,19 +134,21 @@ void onCommand(char* topic, byte* payload, unsigned int len) {
   if (strstr(msg, "relay_off")) digitalWrite(RELAY_PIN, LOW);
 }
 
-// ─── Non-blocking MQTT connect with LWT + QoS 1 ──────────────
+// ─── Non-blocking MQTT connect with AUTH + LWT + QoS 1 ────────
 bool connectMQTT() {
   String willTopic = "indos/devices/" + String(DEVICE_ID) + "/status";
   String willPayload = "{\\"status\\":\\"offline\\",\\"ts\\":0}";
   bool ok = client.connect(
     DEVICE_ID,           // clientId
+    MQTT_USER,           // username (broker auth)
+    MQTT_PASSWORD,       // password (broker auth)
     willTopic.c_str(),   // LWT topic
     1,                   // LWT QoS
     true,                // LWT retain
     willPayload.c_str()  // LWT payload
   );
   if (ok) {
-    Serial.println(" ✓ MQTT connected");
+    Serial.println(" ✓ MQTT connected (authenticated)");
     client.subscribe("indos/devices/esp32-sensor-01/cmd");
     // Publish online status (retained)
     char status[80];

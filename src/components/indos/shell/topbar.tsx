@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { useSession, signOut } from 'next-auth/react'
 import { useIndOS } from '@/lib/indos/store'
 import { useRealtime } from '@/lib/indos/realtime'
 import { cn } from '@/lib/utils'
@@ -153,35 +154,49 @@ export function Topbar() {
         </DropdownMenu>
 
         {/* User menu */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:px-2">
-              <Avatar className="h-7 w-7">
-                <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">SC</AvatarFallback>
-              </Avatar>
-              <div className="hidden text-left sm:block">
-                <p className="text-xs font-medium leading-tight">Sarah Chen</p>
-                <p className="text-[10px] leading-tight text-muted-foreground">Administrator</p>
-              </div>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuLabel>
-              <div className="flex flex-col">
-                <span className="text-sm font-medium">Sarah Chen</span>
-                <span className="text-xs font-normal text-muted-foreground">admin@indos.io</span>
-              </div>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setView('settings')}><Settings className="mr-2 h-4 w-4" /> System Settings</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setView('audit')}><ShieldCheck className="mr-2 h-4 w-4" /> Audit Logs</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setView('organizations')}><User className="mr-2 h-4 w-4" /> Profile & Access</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-rose-400 focus:text-rose-400"><LogOut className="mr-2 h-4 w-4" /> Sign out</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <UserMenu />
       </div>
     </header>
+  )
+}
+
+function UserMenu() {
+  const { data: session } = useSession()
+  const { setView } = useIndOS()
+  const name = session?.user?.name || 'User'
+  const email = session?.user?.email || ''
+  const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" className="h-9 gap-2 px-1.5 sm:px-2">
+          <Avatar className="h-7 w-7">
+            <AvatarFallback className="bg-primary/15 text-xs font-semibold text-primary">{initials}</AvatarFallback>
+          </Avatar>
+          <div className="hidden text-left sm:block">
+            <p className="text-xs font-medium leading-tight">{name}</p>
+            <p className="text-[10px] leading-tight text-muted-foreground capitalize">{(session?.user as any)?.role || 'user'}</p>
+          </div>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel>
+          <div className="flex flex-col">
+            <span className="text-sm font-medium">{name}</span>
+            <span className="text-xs font-normal text-muted-foreground">{email}</span>
+          </div>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => setView('settings')}><Settings className="mr-2 h-4 w-4" /> System Settings</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setView('audit')}><ShieldCheck className="mr-2 h-4 w-4" /> Audit Logs</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => setView('organizations')}><User className="mr-2 h-4 w-4" /> Profile & Access</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="text-rose-400 focus:text-rose-400" onClick={() => signOut({ callbackUrl: '/login' })}>
+          <LogOut className="mr-2 h-4 w-4" /> Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

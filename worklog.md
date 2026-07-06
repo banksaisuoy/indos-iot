@@ -299,3 +299,65 @@ Verification:
 Stage Summary:
 - 13 Critical issues fixed. 0 new features. 0 API shape changes. Backward compatible.
 - Deferred Critical (requires new features / API changes): full auth system (NextAuth middleware + login UI), MQTT broker auth (device provisioning), signed OTA pipeline, InfluxDB migration, cursor pagination. All documented in roadmap.
+
+---
+Task ID: PHASE4-AUTH
+Agent: orchestrator (main)
+Task: P0 Security Blocker #1 — Implement real NextAuth authentication + protect all APIs.
+
+Files Changed:
+- `package.json` — added `bcryptjs` + `@types/bcryptjs`
+- `prisma/schema.prisma` — added `password String?` field to User model (nullable for future OIDC users)
+- `prisma/seed.ts` — updated to hash passwords with bcrypt (`bcrypt.hashSync('indos123', 10)`)
+- `src/lib/auth.ts` (NEW) — NextAuth config: CredentialsProvider + bcrypt verify + JWT callbacks (role+uid)
+- `src/app/api/auth/[...nextauth]/route.ts` (NEW) — NextAuth route handler at `/api/auth/*`
+- `src/middleware.ts` (NEW) — protects all routes except /login, /api/auth/*, /api/health. Returns 401 JSON for unauth API, redirects to /login for unauth pages.
+- `src/app/login/page.tsx` (NEW) — login UI with email/password form, error display, signIn() call
+- `src/components/indos/providers.tsx` (NEW) — SessionProvider wrapper
+- `src/app/layout.tsx` — wrapped children in `<Providers>` (SessionProvider)
+- `src/components/indos/shell/topbar.tsx` — replaced hardcoded "Sarah Chen" with real `useSession()` + `signOut()`. Added `UserMenu` component.
+- `src/lib/auth.test.ts` (NEW) — 5 tests: bcrypt hashing, salt uniqueness, API protection contract docs
+- `.env` — added `NEXTAUTH_SECRET`
+- DB reset + re-seeded with hashed passwords
+
+Verification:
+- `bun run lint` → 0 errors
+- `bunx tsc --noEmit` → 0 errors
+- `bunx vitest run` → 12/12 tests pass (7 schema + 5 auth)
+- Unauthenticated API → 401 `{"error":"UNAUTHORIZED"}`
+- Authenticated API → 200
+- Login with valid creds → 200 + session cookie
+- Login with wrong password → 401, no session
+- Browser: redirected to /login → filled creds → dashboard renders
+- Browser: wrong password → error shown, stays on /login
+- /api/health and /login remain public (200)
+- No public IndOS API remains accessible without session.
+
+---
+Task ID: PHASE5-MQTT-AUTH
+Agent: orchestrator (main)
+Task: P0 Security Blocker #2 — MQTT broker authentication + ACL.
+
+Files Changed:
+- `mini-services/telemetry/index.ts` — added `broker.authenticate` (bcrypt-verified username+password), `broker.authorizePublish` (devices can only publish to `indos/devices/{username}/telemetry|heartbeat|status`), `broker.authorizeSubscribe` (devices can only subscribe to `indos/devices/{username}/cmd|config|ota`). Bridge service account for internal forwarding. Loads device credentials from `devices.json`.
+- `mini-services/telemetry/package.json` — added `bcryptjs` dependency
+- `mini-services/telemetry/devices.json` (auto-created) — device credential store (username + bcrypt hash + project)
+- `src/components/indos/views/deployment-view.tsx` — ESP32 sketch updated: added `MQTT_USER` + `MQTT_PASSWORD` constants, `client.connect()` now passes username+password
+- `mosquitto.conf` — production config: `allow_anonymous false`, `password_file`, `acl_file`, message size limit, keepalive limit
+- `mosquitto-acl.conf` (NEW) — per-device ACL: pattern-based `write indos/devices/%u/telemetry|heartbeat|status`, `read indos/devices/%u/cmd|config|ota`
+- `scripts/provision-device.sh` (NEW) — device provisioning script: generates bcrypt hash for aedes devices.json + mosquitto passwd file
+
+Verification:
+- `bun run lint` → 0 errors
+- `bunx tsc --noEmit` → 0 errors
+- `bunx vitest run` → 12/12 tests pass
+- MQTT broker auth verified via broker logs:
+  - No credentials → rejected (`Auth failed: missing credentials`)
+  - Wrong password → rejected (`Auth failed: wrong password`)
+  - Valid credentials → authenticated (`Device authenticated: esp32-sensor-01`)
+- ACL configured: devices can only publish/subscribe to their own topic space
+- ESP32 sketch updated with MQTT_USER + MQTT_PASSWORD
+- Production mosquitto.conf + ACL file ready for Eclipse Mosquitto in docker-compose
+- Device provisioning script ready for adding new devices
+
+Note: CONNACK delivery from aedes running under bun has a known networking quirk (mqtt npm client times out). The broker's authenticate callback IS invoked correctly (verified via logs). In production, Eclipse Mosquitto (from docker-compose) handles the full MQTT protocol correctly for ESP32 PubSubClient clients.

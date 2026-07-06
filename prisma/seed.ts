@@ -1,5 +1,6 @@
 // IndOS seed — populates the platform with realistic industrial data on first run.
 import { PrismaClient } from '@prisma/client'
+import bcrypt from 'bcryptjs'
 
 const db = new PrismaClient()
 
@@ -17,14 +18,15 @@ async function main() {
     data: { name: 'Acme Manufacturing Co.', email: 'ops@acme.com', phone: '+66 2 555 0100', orgId: org.id },
   })
 
-  // Users
+  // Users — passwords hashed with bcrypt (all use "indos123" for demo)
+  const passwordHash = bcrypt.hashSync('indos123', 10)
   await db.user.createMany({
     data: [
-      { email: 'admin@indos.io', name: 'Sarah Chen', role: 'admin', orgId: org.id, status: 'active', twoFA: true, lastLogin: ago(30) },
-      { email: 'engineer@indos.io', name: 'Marcus Reed', role: 'engineer', orgId: org.id, status: 'active', lastLogin: ago(120) },
-      { email: 'operator@indos.io', name: 'Lin Wang', role: 'operator', orgId: org.id, status: 'active', lastLogin: ago(5) },
-      { email: 'viewer@indos.io', name: 'Diego Alvarez', role: 'viewer', orgId: org.id, status: 'active', lastLogin: ago(1440) },
-      { email: 'field@indos.io', name: 'Priya Nair', role: 'engineer', orgId: org.id, status: 'active', lastLogin: ago(240) },
+      { email: 'admin@indos.io', name: 'Sarah Chen', role: 'admin', password: passwordHash, orgId: org.id, status: 'active', twoFA: true, lastLogin: ago(30) },
+      { email: 'engineer@indos.io', name: 'Marcus Reed', role: 'engineer', password: passwordHash, orgId: org.id, status: 'active', lastLogin: ago(120) },
+      { email: 'operator@indos.io', name: 'Lin Wang', role: 'operator', password: passwordHash, orgId: org.id, status: 'active', lastLogin: ago(5) },
+      { email: 'viewer@indos.io', name: 'Diego Alvarez', role: 'viewer', password: passwordHash, orgId: org.id, status: 'active', lastLogin: ago(1440) },
+      { email: 'field@indos.io', name: 'Priya Nair', role: 'engineer', password: passwordHash, orgId: org.id, status: 'active', lastLogin: ago(240) },
     ],
   })
 

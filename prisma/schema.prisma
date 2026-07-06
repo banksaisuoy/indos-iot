@@ -16,6 +16,7 @@ model User {
   email       String   @unique
   name        String
   role        String   @default("operator") // admin | engineer | operator | viewer
+  password    String?  // bcrypt hash (nullable for future OIDC-only users)
   orgId       String?
   org         Organization? @relation(fields: [orgId], references: [id])
   avatar      String?
