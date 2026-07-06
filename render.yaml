@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: indos
+    env: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: NEXTAUTH_SECRET
+        sync: false
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: OTA_SIGNING_PRIVATE_KEY
+        sync: false
+      - key: OTA_SIGNING_PUBLIC_KEY
+        sync: false
+      - key: OTA_SIGNING_KEY_ID
+        value: key-001
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: WASABI_ACCESS_KEY
+        sync: false
+      - key: WASABI_SECRET_KEY
+        sync: false
+      - key: WASABI_ENDPOINT
+        value: https://s3.wasabisys.com
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: PORT
+        value: 3000
