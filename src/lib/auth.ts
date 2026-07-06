@@ -12,30 +12,57 @@ export const authOptions: NextAuthOptions = {
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null
+        console.log('[auth] 🔐 authorize() called')
+        console.log('[auth]   email:', credentials?.email)
+        console.log('[auth]   password provided:', !!credentials?.password)
 
+        if (!credentials?.email || !credentials?.password) {
+          console.log('[auth] ❌ Missing email or password')
+          return null
+        }
+
+        console.log('[auth] 🔍 Looking up user in DB...')
         const user = await db.user.findUnique({
           where: { email: credentials.email.toLowerCase() },
         })
 
-        // User must exist, be active, and have a password hash
-        if (!user || user.status !== 'active' || !user.password) return null
+        if (!user) {
+          console.log('[auth] ❌ User not found:', credentials.email)
+          return null
+        }
+        console.log('[auth] ✅ User found:', user.email, 'role:', user.role, 'status:', user.status)
 
-        // Verify password with bcrypt
+        if (user.status !== 'active') {
+          console.log('[auth] ❌ User not active:', user.status)
+          return null
+        }
+        if (!user.password) {
+          console.log('[auth] ❌ User has no password hash')
+          return null
+        }
+
+        console.log('[auth] 🔑 Verifying bcrypt password...')
         const valid = bcrypt.compareSync(credentials.password, user.password)
-        if (!valid) return null
+        console.log('[auth]   bcrypt result:', valid)
+        if (!valid) {
+          console.log('[auth] ❌ Password mismatch')
+          return null
+        }
 
-        // Update last login timestamp
-        await db.user.update({
-          where: { id: user.id },
-          data: { lastLogin: new Date() },
-        })
+        console.log('[auth] ✅ Password verified — updating lastLogin + audit log')
+        try {
+          await db.user.update({
+            where: { id: user.id },
+            data: { lastLogin: new Date() },
+          })
+          await db.auditLog.create({
+            data: { actor: user.email, action: 'login', ip: '0.0.0.0' },
+          })
+        } catch (e) {
+          console.log('[auth] ⚠️ Audit log write failed (non-fatal):', (e as Error).message)
+        }
 
-        // Write audit log
-        await db.auditLog.create({
-          data: { actor: user.email, action: 'login', ip: '0.0.0.0' },
-        })
-
+        console.log('[auth] ✅ Returning user object for JWT')
         return {
           id: user.id,
           name: user.name,
@@ -64,7 +91,8 @@ export const authOptions: NextAuthOptions = {
     },
   },
   secret: process.env.NEXTAUTH_SECRET || 'indos-dev-secret-change-in-production',
-  // Allow session cookies in iframe / preview panel context
+  // Cookies configured for dev (HTTP) + preview panel (iframe) compatibility
+  // In production with HTTPS, change secure to true
   cookies: {
     sessionToken: {
       name: 'next-auth.session-token',

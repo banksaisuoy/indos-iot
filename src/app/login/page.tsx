@@ -5,25 +5,45 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { CircuitBoard, Loader2, AlertCircle } from 'lucide-react'
+import { CircuitBoard, Loader2, AlertCircle, Bug } from 'lucide-react'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [logs, setLogs] = useState<string[]>([])
+
+  const log = (msg: string) => {
+    const ts = new Date().toLocaleTimeString('en-GB', { hour12: false })
+    const entry = `[${ts}] ${msg}`
+    console.log(entry)
+    setLogs(prev => [...prev, entry])
+  }
 
   // If already logged in, redirect to dashboard
   useEffect(() => {
-    fetch('/api/auth/session').then(r => r.json()).then(s => {
-      if (s?.user) window.location.href = '/'
-    }).catch(() => {})
+    log('🔍 Page loaded — checking existing session...')
+    fetch('/api/auth/session')
+      .then(r => { log(`📋 Session API response: ${r.status} ${r.statusText}`); return r.json() })
+      .then(s => {
+        if (s?.user) {
+          log(`✅ Already logged in as ${s.user.email} — redirecting to /`)
+          window.location.href = '/'
+        } else {
+          log('👤 No active session — showing login form')
+        }
+      })
+      .catch(e => log(`❌ Session check failed: ${e.message}`))
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError('')
+    log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
+    log(`📝 Login attempt: email="${email}" password="${'*'.repeat(password.length)}"`)
+    log('1️⃣ Calling signIn("credentials", { redirect: false })...')
 
     try {
       const result = await signIn('credentials', {
@@ -32,24 +52,51 @@ export default function LoginPage() {
         redirect: false,
       })
 
+      log(`2️⃣ signIn() returned: ${JSON.stringify(result)}`)
+
       if (result?.error) {
-        setError('Invalid email or password')
+        log(`❌ Login failed: error="${result.error}"`)
+        log(`   status: ${result.status}`)
+        log(`   url: ${result.url}`)
+        setError(`Login failed (error: ${result.error}). Check credentials.`)
         setLoading(false)
       } else if (result?.ok) {
-        // Use hard redirect instead of router.push — works in iframe/preview
-        window.location.href = '/'
+        log(`✅ Login OK! status=${result.status}`)
+        log(`   result.url: ${result.url}`)
+        log('3️⃣ Verifying session was created...')
+
+        // Verify session cookie was actually set
+        const sessResp = await fetch('/api/auth/session')
+        const sess = await sessResp.json()
+        log(`4️⃣ Session check: status=${sessResp.status} user=${sess?.user?.email || 'NONE'}`)
+
+        if (sess?.user) {
+          log('5️⃣ Session confirmed — redirecting to /')
+          window.location.href = '/'
+        } else {
+          log('⚠️  Login said OK but no session found — cookie may be blocked')
+          log('   This happens in some iframe/embedded contexts')
+          setError('Login succeeded but session cookie was blocked. Try opening in a new tab.')
+          setLoading(false)
+        }
       } else {
-        // Fallback: unknown result — try redirect anyway
+        log(`⚠️  Unexpected result: ok=${result?.ok} error=${result?.error}`)
+        log('   Trying redirect anyway...')
         setTimeout(() => { window.location.href = '/' }, 500)
       }
-    } catch (err) {
-      setError('Login failed. Please try again.')
+    } catch (err: any) {
+      log(`💥 Exception during signIn: ${err.message}`)
+      log(`   stack: ${err.stack?.slice(0, 200)}`)
+      setError(`Login error: ${err.message}`)
       setLoading(false)
     }
 
-    // Safety timeout — if stuck on "Signing in…" for 10s, force redirect
+    // Safety timeout
     setTimeout(() => {
-      if (loading) window.location.href = '/'
+      if (loading) {
+        log('⏰ 10s timeout — forcing redirect to /')
+        window.location.href = '/'
+      }
     }, 10_000)
   }
 
@@ -113,6 +160,34 @@ export default function LoginPage() {
             </form>
           </CardContent>
         </Card>
+
+        {/* DEBUG LOG PANEL — shows on screen */}
+        {logs.length > 0 && (
+          <Card className="border-amber-500/30 bg-amber-500/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-xs text-amber-400">
+                <Bug className="h-3.5 w-3.5" /> Debug Log (copy & send to developer)
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="indos-scroll max-h-48 overflow-y-auto rounded-md bg-slate-950/80 p-3 font-mono text-[10px] leading-relaxed text-slate-300">
+                {logs.map((l, i) => (
+                  <div key={i} className={l.includes('❌') || l.includes('💥') || l.includes('⚠️') ? 'text-rose-400' : l.includes('✅') ? 'text-emerald-400' : 'text-slate-300'}>
+                    {l}
+                  </div>
+                ))}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-2 h-7 w-full gap-1.5 text-xs"
+                onClick={() => { navigator.clipboard?.writeText(logs.join('\n')); }}
+              >
+                Copy log to clipboard
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         <p className="text-center text-[11px] text-muted-foreground">
           Self-hosted · No cloud · Your data never leaves the plant network
