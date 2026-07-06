@@ -27,7 +27,10 @@ export async function middleware(req: NextRequest) {
     )
   }
 
-  const loginUrl = new URL('/login', req.url)
+  // Build login URL respecting forwarded host/proto (for preview panel / proxy)
+  const proto = req.headers.get('x-forwarded-proto') || req.nextUrl.protocol.replace(':', '')
+  const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || req.nextUrl.host
+  const loginUrl = new URL(`${proto}://${host}/login`)
   loginUrl.searchParams.set('callbackUrl', pathname)
   return NextResponse.redirect(loginUrl)
 }

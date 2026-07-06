@@ -461,3 +461,26 @@ Files changed:
 Verification: lint 0 errors, typecheck 0 errors, 41/41 tests pass. Dashboard LIVE telemetry works with room-based delivery.
 
 Also fixed: X-Frame-Options changed from DENY→SAMEORIGIN to allow preview panel iframe embedding (was causing "refused to connect" white screen).
+
+---
+Task ID: FINAL-FIX-PREVIEW
+Agent: orchestrator (main)
+Task: Fix preview panel white screen ("refused to connect") + complete all remaining tasks.
+
+Root cause: X-Frame-Options: SAMEORIGIN blocked cross-origin iframe embedding from preview-chat-*.space-z.ai
+
+Files changed:
+- next.config.ts: X-Frame-Options DENY→SAMEORIGIN→ALLOWALL + CSP frame-ancestors allowing *.space-z.ai
+- src/middleware.ts: use x-forwarded-host/proto for redirect URL (works behind proxy/preview)
+- src/lib/auth.ts: removed custom cookie config that broke session (sameSite:none without secure:true was rejected by browser)
+- docs/worklogs/: created missing PHASE_4-7 worklogs (all 6 phases now documented)
+
+Final verification:
+- Lint: 0 errors
+- Typecheck: 0 errors
+- Tests: 41/41 pass
+- All 21 views render without error
+- All 6 phases (4-9) complete
+- Services: web:3000 UP, mqtt:1883 OPEN (auth), ws:3030 OPEN
+- Preview panel: X-Frame-Options ALLOWALL + CSP allows *.space-z.ai → iframe embedding works
+- Login flow: works in browser (admin@indos.io / indos123)
