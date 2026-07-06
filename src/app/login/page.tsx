@@ -1,7 +1,6 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { signIn } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -9,30 +8,49 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { CircuitBoard, Loader2, AlertCircle } from 'lucide-react'
 
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  // If already logged in, redirect to dashboard
+  useEffect(() => {
+    fetch('/api/auth/session').then(r => r.json()).then(s => {
+      if (s?.user) window.location.href = '/'
+    }).catch(() => {})
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError('')
 
-    const result = await signIn('credentials', {
-      email,
-      password,
-      redirect: false,
-    })
+    try {
+      const result = await signIn('credentials', {
+        email,
+        password,
+        redirect: false,
+      })
 
-    if (result?.error) {
-      setError('Invalid email or password')
+      if (result?.error) {
+        setError('Invalid email or password')
+        setLoading(false)
+      } else if (result?.ok) {
+        // Use hard redirect instead of router.push — works in iframe/preview
+        window.location.href = '/'
+      } else {
+        // Fallback: unknown result — try redirect anyway
+        setTimeout(() => { window.location.href = '/' }, 500)
+      }
+    } catch (err) {
+      setError('Login failed. Please try again.')
       setLoading(false)
-    } else if (result?.ok) {
-      router.push('/')
-      router.refresh()
     }
+
+    // Safety timeout — if stuck on "Signing in…" for 10s, force redirect
+    setTimeout(() => {
+      if (loading) window.location.href = '/'
+    }, 10_000)
   }
 
   return (
