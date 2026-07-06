@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { signIn } from 'next-auth/react'
+import { signIn, getSession } from 'next-auth/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -22,47 +22,74 @@ export default function LoginPage() {
   }
 
   useEffect(() => {
-    log('🔍 Page loaded — checking existing session...')
-    fetch('/api/auth/session')
-      .then(r => { log(`📋 Session API: ${r.status}`); return r.json() })
+    log('🔍 Page loaded — checking session...')
+    getSession()
       .then(s => {
         if (s?.user) {
-          log(`✅ Already logged in as ${s.user.email}`)
-          window.location.href = '/'
+          log(`✅ Already logged in: ${s.user.email}`)
+          window.location.replace('/')
         } else {
-          log('👤 No session — showing login form')
+          log('👤 No session — show login form')
         }
       })
-      .catch(e => log(`❌ Session check failed: ${e.message}`))
+      .catch(e => log(`❌ Session check: ${e.message}`))
   }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError('')
-    log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-    log(`📝 Login: email="${email}"`)
-    log('1️⃣ Calling signIn with redirect=true (full page redirect for iframe cookie support)...')
+    log('━━━━━━━━━━━━━━━━━━━━━━')
+    log(`📝 Login: ${email}`)
+    log('1️⃣ Calling signIn(redirect:false)...')
 
-    // Use redirect: true — browser handles cookie via full navigation
-    // This is the ONLY reliable way to set cookies in a cross-origin iframe
-    await signIn('credentials', {
-      email,
-      password,
-      redirect: true,
-      callbackUrl: '/',
-    })
+    try {
+      const result = await signIn('credentials', {
+        email,
+        password,
+        redirect: false,
+      })
 
-    // If we get here, something went wrong (signIn with redirect=true should navigate away)
-    log('⚠️ signIn() returned without redirecting — this should not happen')
-    setError('Login may have failed. Check console for errors.')
-    setLoading(false)
+      log(`2️⃣ Result: ${JSON.stringify(result)}`)
+
+      if (result?.error) {
+        log(`❌ Error: ${result.error}`)
+        setError('อีเมลหรือรหัสผ่านไม่ถูกต้อง')
+        setLoading(false)
+        return
+      }
+
+      if (result?.ok) {
+        log('✅ Login OK — checking session...')
+        // Wait a moment for cookie to settle
+        await new Promise(r => setTimeout(r, 300))
+        const session = await getSession()
+        log(`3️⃣ Session: ${session?.user?.email || 'NONE'}`)
+
+        if (session?.user) {
+          log('4️⃣ Session confirmed — redirecting')
+          // Use replace instead of href to avoid back-button issues
+          window.location.replace('/')
+        } else {
+          log('⚠️ No session after login — cookie blocked by browser')
+          setError('Login สำเร็จแต่ session cookie ถูกบล็อก ลองเปิดในแท็บใหม่ (Open in New Tab)')
+          setLoading(false)
+        }
+      } else {
+        log('⚠️ Unexpected result')
+        setError('Login ล้มเหลว — ลองอีกครั้ง')
+        setLoading(false)
+      }
+    } catch (err: any) {
+      log(`💥 Exception: ${err.message}`)
+      setError(`Error: ${err.message}`)
+      setLoading(false)
+    }
   }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-sm space-y-6">
-        {/* Brand */}
         <div className="flex flex-col items-center gap-3">
           <div className="relative flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-primary-foreground ring-1 ring-primary/40 indos-glow">
             <CircuitBoard className="h-6 w-6" />
@@ -82,28 +109,13 @@ export default function LoginPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="admin@indos.io"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  autoFocus
-                  disabled={loading}
-                />
+                <Input id="email" type="email" placeholder="admin@indos.io" value={email}
+                  onChange={(e) => setEmail(e.target.value)} required autoFocus disabled={loading} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  disabled={loading}
-                />
+                <Input id="password" type="password" placeholder="••••••••" value={password}
+                  onChange={(e) => setPassword(e.target.value)} required disabled={loading} />
               </div>
 
               {error && (
@@ -118,14 +130,12 @@ export default function LoginPage() {
               </Button>
             </form>
 
-            {/* Quick login hint */}
             <div className="mt-3 rounded-md border border-border/50 bg-muted/30 p-2 text-center text-[10px] text-muted-foreground">
               Demo: <span className="font-mono text-primary">admin@indos.io</span> / <span className="font-mono text-primary">indos123</span>
             </div>
           </CardContent>
         </Card>
 
-        {/* DEBUG LOG PANEL */}
         {logs.length > 0 && (
           <Card className="border-amber-500/30 bg-amber-500/5">
             <CardHeader className="pb-2">
@@ -136,17 +146,13 @@ export default function LoginPage() {
             <CardContent>
               <div className="indos-scroll max-h-40 overflow-y-auto rounded-md bg-slate-950/80 p-3 font-mono text-[10px] leading-relaxed text-slate-300">
                 {logs.map((l, i) => (
-                  <div key={i} className={l.includes('❌') || l.includes('⚠️') ? 'text-rose-400' : l.includes('✅') ? 'text-emerald-400' : 'text-slate-300'}>
+                  <div key={i} className={l.includes('❌') || l.includes('⚠️') || l.includes('💥') ? 'text-rose-400' : l.includes('✅') ? 'text-emerald-400' : 'text-slate-300'}>
                     {l}
                   </div>
                 ))}
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                className="mt-2 h-7 w-full gap-1.5 text-xs"
-                onClick={() => navigator.clipboard?.writeText(logs.join('\n'))}
-              >
+              <Button size="sm" variant="outline" className="mt-2 h-7 w-full gap-1.5 text-xs"
+                onClick={() => navigator.clipboard?.writeText(logs.join('\n'))}>
                 Copy log
               </Button>
             </CardContent>
