@@ -19,7 +19,7 @@ export async function middleware(req: NextRequest) {
 
   // Unauthenticated:
   // - API routes → 401 JSON
-  // - Page routes → redirect to /login
+  // - Page routes → redirect to /login (relative, works in any iframe/proxy context)
   if (pathname.startsWith('/api/')) {
     return NextResponse.json(
       { error: 'UNAUTHORIZED', message: 'Authentication required' },
@@ -27,10 +27,10 @@ export async function middleware(req: NextRequest) {
     )
   }
 
-  // Build login URL respecting forwarded host/proto (for preview panel / proxy)
-  const proto = req.headers.get('x-forwarded-proto') || req.nextUrl.protocol.replace(':', '')
-  const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || req.nextUrl.host
-  const loginUrl = new URL(`${proto}://${host}/login`)
+  // Use req.nextUrl.clone() which respects the Host header from the proxy
+  const loginUrl = req.nextUrl.clone()
+  loginUrl.pathname = '/login'
+  loginUrl.search = ''
   loginUrl.searchParams.set('callbackUrl', pathname)
   return NextResponse.redirect(loginUrl)
 }
