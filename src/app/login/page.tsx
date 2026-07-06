@@ -21,17 +21,16 @@ export default function LoginPage() {
     setLogs(prev => [...prev, entry])
   }
 
-  // If already logged in, redirect to dashboard
   useEffect(() => {
     log('🔍 Page loaded — checking existing session...')
     fetch('/api/auth/session')
-      .then(r => { log(`📋 Session API response: ${r.status} ${r.statusText}`); return r.json() })
+      .then(r => { log(`📋 Session API: ${r.status}`); return r.json() })
       .then(s => {
         if (s?.user) {
-          log(`✅ Already logged in as ${s.user.email} — redirecting to /`)
+          log(`✅ Already logged in as ${s.user.email}`)
           window.location.href = '/'
         } else {
-          log('👤 No active session — showing login form')
+          log('👤 No session — showing login form')
         }
       })
       .catch(e => log(`❌ Session check failed: ${e.message}`))
@@ -42,62 +41,22 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
     log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-    log(`📝 Login attempt: email="${email}" password="${'*'.repeat(password.length)}"`)
-    log('1️⃣ Calling signIn("credentials", { redirect: false })...')
+    log(`📝 Login: email="${email}"`)
+    log('1️⃣ Calling signIn with redirect=true (full page redirect for iframe cookie support)...')
 
-    try {
-      const result = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-      })
+    // Use redirect: true — browser handles cookie via full navigation
+    // This is the ONLY reliable way to set cookies in a cross-origin iframe
+    await signIn('credentials', {
+      email,
+      password,
+      redirect: true,
+      callbackUrl: '/',
+    })
 
-      log(`2️⃣ signIn() returned: ${JSON.stringify(result)}`)
-
-      if (result?.error) {
-        log(`❌ Login failed: error="${result.error}"`)
-        log(`   status: ${result.status}`)
-        log(`   url: ${result.url}`)
-        setError(`Login failed (error: ${result.error}). Check credentials.`)
-        setLoading(false)
-      } else if (result?.ok) {
-        log(`✅ Login OK! status=${result.status}`)
-        log(`   result.url: ${result.url}`)
-        log('3️⃣ Verifying session was created...')
-
-        // Verify session cookie was actually set
-        const sessResp = await fetch('/api/auth/session')
-        const sess = await sessResp.json()
-        log(`4️⃣ Session check: status=${sessResp.status} user=${sess?.user?.email || 'NONE'}`)
-
-        if (sess?.user) {
-          log('5️⃣ Session confirmed — redirecting to /')
-          window.location.href = '/'
-        } else {
-          log('⚠️  Login said OK but no session found — cookie may be blocked')
-          log('   This happens in some iframe/embedded contexts')
-          setError('Login succeeded but session cookie was blocked. Try opening in a new tab.')
-          setLoading(false)
-        }
-      } else {
-        log(`⚠️  Unexpected result: ok=${result?.ok} error=${result?.error}`)
-        log('   Trying redirect anyway...')
-        setTimeout(() => { window.location.href = '/' }, 500)
-      }
-    } catch (err: any) {
-      log(`💥 Exception during signIn: ${err.message}`)
-      log(`   stack: ${err.stack?.slice(0, 200)}`)
-      setError(`Login error: ${err.message}`)
-      setLoading(false)
-    }
-
-    // Safety timeout
-    setTimeout(() => {
-      if (loading) {
-        log('⏰ 10s timeout — forcing redirect to /')
-        window.location.href = '/'
-      }
-    }, 10_000)
+    // If we get here, something went wrong (signIn with redirect=true should navigate away)
+    log('⚠️ signIn() returned without redirecting — this should not happen')
+    setError('Login may have failed. Check console for errors.')
+    setLoading(false)
   }
 
   return (
@@ -158,21 +117,26 @@ export default function LoginPage() {
                 {loading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing in…</> : 'Sign in'}
               </Button>
             </form>
+
+            {/* Quick login hint */}
+            <div className="mt-3 rounded-md border border-border/50 bg-muted/30 p-2 text-center text-[10px] text-muted-foreground">
+              Demo: <span className="font-mono text-primary">admin@indos.io</span> / <span className="font-mono text-primary">indos123</span>
+            </div>
           </CardContent>
         </Card>
 
-        {/* DEBUG LOG PANEL — shows on screen */}
+        {/* DEBUG LOG PANEL */}
         {logs.length > 0 && (
           <Card className="border-amber-500/30 bg-amber-500/5">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-xs text-amber-400">
-                <Bug className="h-3.5 w-3.5" /> Debug Log (copy & send to developer)
+                <Bug className="h-3.5 w-3.5" /> Debug Log
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="indos-scroll max-h-48 overflow-y-auto rounded-md bg-slate-950/80 p-3 font-mono text-[10px] leading-relaxed text-slate-300">
+              <div className="indos-scroll max-h-40 overflow-y-auto rounded-md bg-slate-950/80 p-3 font-mono text-[10px] leading-relaxed text-slate-300">
                 {logs.map((l, i) => (
-                  <div key={i} className={l.includes('❌') || l.includes('💥') || l.includes('⚠️') ? 'text-rose-400' : l.includes('✅') ? 'text-emerald-400' : 'text-slate-300'}>
+                  <div key={i} className={l.includes('❌') || l.includes('⚠️') ? 'text-rose-400' : l.includes('✅') ? 'text-emerald-400' : 'text-slate-300'}>
                     {l}
                   </div>
                 ))}
@@ -181,9 +145,9 @@ export default function LoginPage() {
                 size="sm"
                 variant="outline"
                 className="mt-2 h-7 w-full gap-1.5 text-xs"
-                onClick={() => { navigator.clipboard?.writeText(logs.join('\n')); }}
+                onClick={() => navigator.clipboard?.writeText(logs.join('\n'))}
               >
-                Copy log to clipboard
+                Copy log
               </Button>
             </CardContent>
           </Card>
