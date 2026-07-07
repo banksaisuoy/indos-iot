@@ -67,7 +67,7 @@ export const authOptions: NextAuthOptions = {
           await db.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } })
           // P2.7 bonus: capture real client IP via x-forwarded-for / x-real-ip when present
           const ip = getClientIp(req)
-          await db.auditLog.create({ data: { actor: user.email, action: 'login', ip } })
+          await db.auditLog.create({ data: { actor: user.email, action: 'login', ip, orgId: user.orgId } })
         } catch (e) {
           console.log('[auth] ⚠️ Audit log failed:', (e as Error).message)
         }

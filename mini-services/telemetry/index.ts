@@ -78,6 +78,7 @@ interface DeviceCredential {
   username: string
   passwordHash: string
   project: string
+  orgId?: string | null  // Phase 14: null/absent = platform device (legacy topic space); set = org-scoped (namespaced topic)
 }
 
 const devicesFile = join(import.meta.dir, 'devices.json')
@@ -140,7 +141,12 @@ broker.authenticate = (client: any, username: string, password: Buffer, callback
   // Store the device username on the client for ACL checks
   client.deviceUsername = username
   client.deviceProject = cred.project
-  console.log(`[indos-mqtt] 🔑 Device authenticated: ${username} (project: ${cred.project})`)
+  // Phase 14: org-scoped topic namespace. null/absent → platform device (legacy
+  // `indos/devices/...` topic space for backward compat). Set → org-scoped
+  // (`indos/{orgId}/devices/...`) so two orgs cannot read/write each other's
+  // device topics even if ACL is misconfigured.
+  client.deviceOrgId = cred.orgId ?? null
+  console.log(`[indos-mqtt] 🔑 Device authenticated: ${username} (project: ${cred.project}${cred.orgId ? `, org: ${cred.orgId}` : ''})`)
   callback(null, true)
 }
 
@@ -157,20 +163,17 @@ broker.authorizePublish = (client: any, packet: any, callback: Function) => {
     return callback(new Error('Not authorized'))
   }
 
-  // Allowed publish patterns for devices:
-  // indos/devices/{username}/telemetry
-  // indos/devices/{username}/heartbeat
-  // indos/devices/{username}/status
-  const allowedPrefixes = [
-    `indos/devices/${username}/telemetry`,
-    `indos/devices/${username}/heartbeat`,
-    `indos/devices/${username}/status`,
-  ]
-
-  const allowed = allowedPrefixes.some(prefix => topic === prefix || topic.startsWith(prefix + '/'))
+  // Phase 14: topic prefix is org-namespaced when the device has an orgId.
+  //   - org-scoped device: `indos/{orgId}/devices/{username}/...`
+  //   - platform device (legacy): `indos/devices/{username}/...`
+  // A device may ONLY publish into its own topic space (org-prefixed or legacy).
+  const orgId = client.deviceOrgId as string | null | undefined
+  const ns = orgId ? `indos/${orgId}/devices/${username}` : `indos/devices/${username}`
+  const allowedSuffixes = ['telemetry', 'heartbeat', 'status']
+  const allowed = allowedSuffixes.some(suf => topic === `${ns}/${suf}` || topic.startsWith(`${ns}/${suf}/`))
 
   if (!allowed) {
-    console.log(`[indos-mqtt] 🚫 Publish denied: "${username}" → "${topic}" (not in own topic space)`)
+    console.log(`[indos-mqtt] 🚫 Publish denied: "${username}" → "${topic}" (expected prefix ${ns}/)`)
     return callback(new Error('Topic not authorized'))
   }
 
@@ -190,20 +193,16 @@ broker.authorizeSubscribe = (client: any, subscription: any, callback: Function)
     return callback(new Error('Not authorized'))
   }
 
-  // Allowed subscribe patterns for devices:
-  // indos/devices/{username}/cmd
-  // indos/devices/{username}/config
-  // indos/devices/{username}/ota
-  const allowedPrefixes = [
-    `indos/devices/${username}/cmd`,
-    `indos/devices/${username}/config`,
-    `indos/devices/${username}/ota`,
-  ]
-
-  const allowed = allowedPrefixes.some(prefix => topic === prefix || topic.startsWith(prefix + '/') || topic === `indos/devices/${username}/#`)
+  // Phase 14: subscribe topics follow the same namespacing as publish.
+  // Allowed: indos/[{orgId}/]devices/{username}/(cmd|config|ota)[/...] or
+  //          indos/[{orgId}/]devices/{username}/#
+  const orgId = client.deviceOrgId as string | null | undefined
+  const ns = orgId ? `indos/${orgId}/devices/${username}` : `indos/devices/${username}`
+  const allowedSuffixes = ['cmd', 'config', 'ota']
+  const allowed = allowedSuffixes.some(suf => topic === `${ns}/${suf}` || topic.startsWith(`${ns}/${suf}/`)) || topic === `${ns}/#`
 
   if (!allowed) {
-    console.log(`[indos-mqtt] 🚫 Subscribe denied: "${username}" → "${topic}" (not in own topic space)`)
+    console.log(`[indos-mqtt] 🚫 Subscribe denied: "${username}" → "${topic}" (expected prefix ${ns}/)`)
     return callback(new Error('Topic not authorized'))
   }
 

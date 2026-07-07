@@ -185,7 +185,10 @@ model Gateway {
   deviceCount Int      @default(0)
   uptime      Float    @default(0)
   location    String?
+  orgId       String?  // Phase 14: null = platform-shared infra; set = org-owned gateway
   createdAt   DateTime @default(now())
+
+  @@index([orgId])
 }
 
 model Sensor {
@@ -280,11 +283,13 @@ model Firmware {
   signature    String?  // Ed25519 signature (base64) of the manifest
   signingKeyId String?  // identifier of the key used to sign
   manifest     String?  // JSON manifest (for device fetch)
+  orgId        String?  // Phase 14: null = platform-shared catalog; set = org-private firmware
   createdAt    DateTime @default(now())
   jobs         OtaJob[]
 
   @@index([deviceType])
   @@index([status])
+  @@index([orgId])
 }
 
 model OtaJob {
@@ -298,10 +303,12 @@ model OtaJob {
   total       Int      @default(0)
   done        Int      @default(0)
   signedBy    String?  // email of the user who dispatched
+  orgId       String?  // Phase 14: org that owns this job (null = platform-level)
   createdAt   DateTime @default(now())
 
   @@index([firmwareId])
   @@index([status])
+  @@index([orgId])
 }
 
 // ─── Cameras ──────────────────────────────────────────────────────────
@@ -315,7 +322,10 @@ model Camera {
   motionDetect Boolean @default(true)
   recording   Boolean  @default(false)
   resolution  String   @default("1080p")
+  orgId       String?  // Phase 14: null = platform-shared infra; set = org-owned camera
   createdAt   DateTime @default(now())
+
+  @@index([orgId])
 }
 
 // ─── Automation ───────────────────────────────────────────────────────
@@ -361,11 +371,13 @@ model AuditLog {
   action    String
   target    String?
   ip        String?
+  orgId     String?  // Phase 14: null = platform-level (admin actions, logins before orgId known)
   ts        DateTime @default(now())
 
   @@index([ts])
   @@index([actor])
   @@index([action])
+  @@index([orgId])
 }
 
 // ─── SCADA Tags & Stations ────────────────────────────────────────────

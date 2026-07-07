@@ -4,24 +4,25 @@ import { withErrorHandler, validateBody } from '@/lib/api'
 import { otaDeploySchema } from '@/lib/indos/schemas'
 import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
 import { parsePaginationParams, cursorPaginate } from '@/lib/pagination'
+import { getOrgId, orgScopeWithPlatform } from '@/lib/org-scope'
 
 // GET: List OTA jobs (any authenticated user) — supports cursor pagination
-// PLATFORM-LEVEL: OtaJob has no orgId; jobs are scoped by firmware which is itself
-// platform-shared. Visibility = all orgs (read-only for org-scoped users).
-// Deploying (POST) is restricted by RBAC to admin/engineer.
-// TODO (P1 follow-up): filter by devices in org when per-org device ownership lands.
-export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async (req) => {
+// Phase 14: OtaJob has a nullable orgId. Org-scoped users see platform-level
+// jobs (orgId=null) PLUS their own org's jobs. Admins see all.
+export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async (req, session) => {
   const { cursor, limit, paginated } = parsePaginationParams(req)
+  const where = orgScopeWithPlatform(session)
 
   if (paginated) {
     const result = await cursorPaginate(db.otaJob, {
-      cursor, limit,
+      cursor, limit, where,
       include: { firmware: true },
     })
     return NextResponse.json(result)
   }
 
   const jobs = await db.otaJob.findMany({
+    where,
     include: { firmware: true },
     orderBy: { createdAt: 'desc' },
     take: 200,
@@ -68,12 +69,14 @@ export const POST = withErrorHandler(apiHandler('engineer', RATE_LIMITS.ota, asy
       total: scope === 'global' ? 0 : scope === 'project' ? 0 : 1,
       done: 0,
       signedBy: session.user?.email || 'unknown',
+      // Phase 14: stamp the actor's orgId. Admin/platform → null (platform-level job).
+      orgId: getOrgId(session) ?? null,
     },
     include: { firmware: true },
   })
 
   await db.auditLog.create({
-    data: { actor: session.user?.email || 'unknown', action: 'ota.deploy', target: `${firmware.version} → ${scope}:${target || 'all'} (job ${job.id})`, ip: '0.0.0.0' },
+    data: { actor: session.user?.email || 'unknown', action: 'ota.deploy', target: `${firmware.version} → ${scope}:${target || 'all'} (job ${job.id})`, ip: '0.0.0.0', orgId: getOrgId(session) ?? null },
   })
 
   return NextResponse.json(job, { status: 201 })

@@ -89,3 +89,26 @@ export function scopedMachineFilter(
   if (!orgId) return {}
   return { line: { building: { factory: { project: { orgId } } } } }
 }
+
+/**
+ * Phase 14 — org-scoped filter for "platform-shared" resources (Firmware, OtaJob,
+ * Gateway, Camera). These models have a nullable `orgId` column:
+ *   - `orgId = null`  → platform-shared, visible to ALL orgs (read-only for org users)
+ *   - `orgId = <org>` → org-private, visible only to that org + admins
+ *
+ * Org-scoped users see their own org's records PLUS platform-shared (null) ones.
+ * Admins / platform users see everything.
+ *
+ * Returns `{}` (no-op, sees all) for admins/platform, or
+ * `{ OR: [{ orgId: null }, { orgId: <callerOrgId> }] }` for org-scoped users.
+ *
+ * Used by: Firmware, OtaJob, Gateway, Camera list endpoints.
+ */
+export function orgScopeWithPlatform(
+  session: Session | null,
+): { OR: Array<{ orgId: null } | { orgId: string }> } | Record<string, never> {
+  const orgId = getOrgId(session)
+  if (!orgId) return {}
+  // Prisma `OR` with explicit null + the caller's orgId.
+  return { OR: [{ orgId: null }, { orgId }] }
+}

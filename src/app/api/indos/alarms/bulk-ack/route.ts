@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { withErrorHandler, validateBody } from '@/lib/api'
 import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
-import { scopedProjectFilter } from '@/lib/org-scope'
+import { scopedProjectFilter, getOrgId } from '@/lib/org-scope'
 import { bulkAckSchema } from '@/lib/indos/schemas'
 
 /**
@@ -85,6 +85,7 @@ export const POST = withErrorHandler(apiHandler('engineer', RATE_LIMITS.write, a
         count: result.count,
       }),
       ip: '0.0.0.0',
+      orgId: getOrgId(session) ?? null,
     },
   })
 

@@ -794,3 +794,27 @@ Stage Summary:
 - 105/105 tests pass; tsc 0 errors; lint 0 errors.
 - Stale-doc corrections applied to P8 (audit role) and P12-A (ack behavior).
 - Phase 11 documented follow-ups (AuditLog orgId, firmware/ota/gw orgId, MQTT namespacing, E2E org-scoping test) remain on the roadmap as P1 items — they were explicitly deferred, not missing.
+
+---
+Task ID: PHASE14-MULTI-TENANT-HARDENING
+Agent: orchestrator (main)
+Task: Close all 4 Phase 11 deferred P1 follow-ups — AuditLog orgId, Firmware/OTA/Gateway/Camera orgId, MQTT topic namespacing, E2E org-scoping tests.
+
+Work Log:
+- Added orgId (nullable) to AuditLog + Firmware + OtaJob + Gateway + Camera in prisma/schema.prisma (+ indexes).
+- Created orgScopeWithPlatform(session) helper in src/lib/org-scope.ts — returns {OR:[{orgId:null},{orgId:ownOrg}]} for org-scoped users (sees platform + own org), {} for admin/platform.
+- Scoped audit route by orgScope (was self-only) — non-admins now see their whole org's audit trail.
+- Scoped firmware/ota/gateways/cameras GET routes via orgScopeWithPlatform; stamped orgId on firmware POST + ota POST creates.
+- Updated auth.ts login audit + alarms/bulk-ack + ota + firmware audit logs to write orgId: getOrgId(session) ?? null.
+- MQTT: added orgId to DeviceCredential interface; broker.authenticate stores client.deviceOrgId; authorizePublish/authorizeSubscribe build org-namespaced topic prefix (indos/{orgId}/devices/{username} for org-scoped, legacy indos/devices/{username} for platform). Updated mosquitto-acl.conf + deployment-view topic schema table.
+- Seed: added Acme-owned gateway (GW-ACME-01) + camera (CAM-ACME-01) alongside platform-shared ones.
+- Tests: +7 unit tests in rbac.test.ts for orgScope/orgScopeWithPlatform (admin/platform/org-scoped/null branches); +8 E2E tests in indos.spec.ts (15-22) covering Acme engineer login, device/project/org/gateway scoping, and 403 on admin APIs.
+
+Stage Summary:
+- All 4 Phase 11 deferred follow-ups closed.
+- 112/112 tests pass (105 existing + 7 new orgScope unit tests). E2E 15-22 cover org scoping end-to-end.
+- tsc 0 errors; lint 0 errors.
+- curl-verified: engineer sees 2 gateways (platform + Acme), 2 cameras (platform + Acme), org-acme audit entries (not self-only).
+- Browser-verified: engineer Gateways view shows 2 rows, no console errors.
+- IndOS is now a complete multi-tenant platform — no deferred org-isolation items remain.
+- docs/worklogs/PHASE_14_MULTI_TENANT_HARDENING.md created; ROADMAP updated with Phase 14 row + "Current state" reflects complete multi-tenant isolation.

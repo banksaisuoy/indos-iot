@@ -3,6 +3,8 @@ import { test, expect } from '@playwright/test'
 // Test credentials — seeded users all use "indos123" password
 const ADMIN = { email: 'admin@indos.io', password: 'indos123' }
 const VIEWER = { email: 'viewer@indos.io', password: 'indos123' }
+// Phase 14: Acme engineer is org-scoped (orgId=org-acme) — sees only Acme data.
+const ACME_ENGINEER = { email: 'engineer@acme.io', password: 'acme123' }
 
 async function login(page: any, creds: { email: string; password: string }) {
   await page.goto('/login')
@@ -139,4 +141,110 @@ test('14. Metrics endpoint returns data', async ({ request }) => {
     expect(body).toHaveProperty('uptime')
   }
   // If 404, metrics not yet implemented — skip gracefully
+})
+
+// ─── Phase 14: org-scoping E2E tests ────────────────────────────────────
+// Verifies that an org-scoped user (engineer@acme.io) sees ONLY their own
+// org's data, while an admin sees everything. Closes the Phase 11 follow-up
+// #4 ("E2E test for org scoping").
+
+// 15. Acme engineer can log in
+test('15. Acme engineer login succeeds', async ({ page }) => {
+  await login(page, ACME_ENGINEER)
+  await expect(page.locator('main')).toContainText('Executive Dashboard')
+})
+
+// 16. Acme engineer sees only Acme devices (3), not Demo Factory devices (5)
+test('16. Acme engineer sees only own-org devices', async ({ request }) => {
+  // Login via API to get a session cookie, then call the devices API.
+  const loginRes = await request.post('/api/auth/callback/credentials', {
+    form: { email: ACME_ENGINEER.email, password: ACME_ENGINEER.password },
+  })
+  // 302 redirect = login succeeded (NextAuth redirects on success)
+  expect([302, 200]).toContain(loginRes.status())
+
+  const res = await request.get('/api/indos/devices')
+  expect(res.status()).toBe(200)
+  const devices = await res.json()
+  // Acme has exactly 3 devices: valve-acme-3, flow-acme-2, pressure-acme-1
+  expect(Array.isArray(devices)).toBe(true)
+  expect(devices.length).toBe(3)
+  const names = devices.map((d: any) => d.name).sort()
+  expect(names).toEqual(['flow-acme-2', 'pressure-acme-1', 'valve-acme-3'])
+  // No Demo Factory devices leak through
+  expect(devices.some((d: any) => d.name.includes('demo'))).toBe(false)
+})
+
+// 17. Admin sees ALL devices (both orgs)
+test('17. Admin sees all orgs\' devices', async ({ request }) => {
+  await request.post('/api/auth/callback/credentials', {
+    form: { email: ADMIN.email, password: ADMIN.password },
+  })
+  const res = await request.get('/api/indos/devices')
+  expect(res.status()).toBe(200)
+  const devices = await res.json()
+  // 8 = 3 Acme + 5 Demo Factory
+  expect(devices.length).toBe(8)
+})
+
+// 18. Acme engineer sees only Acme projects (1), not Demo Factory
+test('18. Acme engineer sees only own-org projects', async ({ request }) => {
+  await request.post('/api/auth/callback/credentials', {
+    form: { email: ACME_ENGINEER.email, password: ACME_ENGINEER.password },
+  })
+  const res = await request.get('/api/indos/projects')
+  expect(res.status()).toBe(200)
+  const projects = await res.json()
+  expect(Array.isArray(projects)).toBe(true)
+  expect(projects.length).toBe(1)
+  expect(projects[0].name).toBe('Acme Plant A')
+})
+
+// 19. Acme engineer sees only their own org (not IndOS Demo)
+test('19. Acme engineer sees only own org', async ({ request }) => {
+  await request.post('/api/auth/callback/credentials', {
+    form: { email: ACME_ENGINEER.email, password: ACME_ENGINEER.password },
+  })
+  const res = await request.get('/api/indos/orgs')
+  expect(res.status()).toBe(200)
+  const orgs = await res.json()
+  expect(Array.isArray(orgs)).toBe(true)
+  expect(orgs.length).toBe(1)
+  expect(orgs[0].name).toBe('Acme Industries')
+})
+
+// 20. Acme engineer sees platform-shared + Acme gateways, not other-org gateways
+test('20. Acme engineer sees platform + own-org gateways', async ({ request }) => {
+  await request.post('/api/auth/callback/credentials', {
+    form: { email: ACME_ENGINEER.email, password: ACME_ENGINEER.password },
+  })
+  const res = await request.get('/api/indos/gateways')
+  expect(res.status()).toBe(200)
+  const gateways = await res.json()
+  // Phase 14 seed: GW-DEMO-01 (platform, orgId=null) + GW-ACME-01 (Acme-owned)
+  expect(gateways.length).toBe(2)
+  const names = gateways.map((g: any) => g.name).sort()
+  expect(names).toEqual(['GW-ACME-01', 'GW-DEMO-01'])
+})
+
+// 21. Acme engineer cannot POST /users (403) — admin-gate enforced server-side
+test('21. Acme engineer POST /users → 403 (admin-gate enforced server-side)', async ({ request }) => {
+  await request.post('/api/auth/callback/credentials', {
+    form: { email: ACME_ENGINEER.email, password: ACME_ENGINEER.password },
+  })
+  const res = await request.post('/api/indos/users', {
+    data: { name: 'Hack', email: 'hack@x.io', password: 'hack12345', role: 'admin' },
+  })
+  expect(res.status()).toBe(403)
+})
+
+// 22. Acme engineer cannot POST /orgs (403)
+test('22. Acme engineer POST /orgs → 403', async ({ request }) => {
+  await request.post('/api/auth/callback/credentials', {
+    form: { email: ACME_ENGINEER.email, password: ACME_ENGINEER.password },
+  })
+  const res = await request.post('/api/indos/orgs', {
+    data: { name: 'Hack Org', type: 'operator' },
+  })
+  expect(res.status()).toBe(403)
 })

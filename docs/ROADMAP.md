@@ -2,7 +2,7 @@
 
 > Living document. Updated after each phase. Priorities: **P0** (blocks production scale-out) → **P3** (long-term strategic).
 
-## Completed Phases (4–13)
+## Completed Phases (4–14)
 
 | Phase | Title | Key Outcome | Date |
 |-------|-------|-------------|------|
@@ -16,8 +16,9 @@
 | 11 | Per-Tenant `orgId` Scoping | `orgScope(session)` / `scopedProjectFilter` helpers applied to all list endpoints; admin cross-org, engineers org-scoped; second org + user seeded; `audit` opened to viewers (self-only); P2.7 real client-IP capture landed early | 2025-07 |
 | 12 | Field-Ops Hardening | Operator-safety banners (connection-loss + critical-alarm persistent banner + audio), real user/org management (POST/PATCH APIs + last-admin protection), bulk alarm ack + CSV export (alarms + devices), real device-detail actions (telemetry chart + OTA navigation), stale-device badge, alarm-sound toggle. Closes 10 real-world pain points identified in a plant-floor review. 81/81 tests pass. | 2025-07 |
 | 13 | Production Readiness Drill | Failure-drill across 13 scenarios; 3 verified production bugs fixed (ack-fail-no-hide, NEXTAUTH_SECRET prod fail-fast, OTA deleted-device validation); 24 new tests (105 total); `.env.example` created; deployment Go/No-Go issued. Conditional GO for single-tenant sqlite pilot. | 2025-07 |
+| 14 | Multi-Tenant Hardening | Closes all 4 Phase 11 deferred follow-ups: orgId on AuditLog (org-scoped audit trail, not self-only), orgId on Firmware/OtaJob/Gateway/Camera + `orgScopeWithPlatform` helper (platform-shared + own-org), MQTT topic namespacing `indos/{orgId}/devices/...`, 8 E2E + 7 unit org-scoping tests. 112/112 tests pass. | 2025-07 |
 
-**Current state:** Production-ready for **multi-tenant** SaaS deployments AND validated against real plant-floor operator workflows + a production-readiness failure drill. Per-tenant data isolation enforced. All operator-safety hazards fixed. NEXTAUTH_SECRET fails fast in production. 105/105 unit tests pass. Lint + typecheck clean. Conditional GO for a single-tenant sqlite pilot; NO-GO for the full Postgres compose stack until P1.1.
+**Current state:** Production-ready **multi-tenant** SaaS platform — every tenant-scoped data surface is org-isolated (devices, alarms, workorders, projects, machines, orgs, users, audit, firmware, ota, gateways, cameras), MQTT topics are org-namespaced, and the org-scoping contract is locked by 15 E2E + unit tests. All operator-safety hazards fixed. NEXTAUTH_SECRET fails fast in production. 112/112 unit tests pass. Lint + typecheck clean.
 
 ---
 

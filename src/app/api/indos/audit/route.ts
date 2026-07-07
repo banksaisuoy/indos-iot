@@ -3,23 +3,26 @@ import { db } from '@/lib/db'
 import { withErrorHandler } from '@/lib/api'
 import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
 import { parsePaginationParams, cursorPaginate } from '@/lib/pagination'
-import { isOrgScoped } from '@/lib/org-scope'
+import { orgScope, isOrgScoped } from '@/lib/org-scope'
 
-// GET: Audit log — now open to any authenticated user (was admin-only).
+// GET: Audit log — open to any authenticated user (was admin-only pre-Phase 11).
 //
-// P0.1 multi-tenant scoping:
-//   AuditLog has no orgId column, so we cannot directly filter by org.
+// Phase 14 multi-tenant scoping (AuditLog now has an orgId column):
 //   - Admins (cross-org) and platform users (null orgId) see ALL audit entries.
-//   - Org-scoped users see ONLY their own entries (actor === session.user.email).
+//   - Org-scoped users see ALL entries in their own org (orgId === session.user.orgId),
+//     including other users' actions — true per-org audit visibility.
+//   - Entries with orgId = null (platform-level: admin actions, pre-org logins)
+//     are visible only to admins / platform users, NOT to org-scoped users.
 //
-// LIMITATION: This is a "self-only" view for non-admins — they cannot see other
-// users' actions within their org. A future schema change (adding orgId to
-// AuditLog) would enable true per-org audit visibility. Tracked as P1 follow-up.
+// Pre-Phase 14 limitation (self-only for non-admins) is lifted — org members
+// can now audit each other's actions within their org, which is the correct
+// compliance posture for a multi-tenant SaaS.
 export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async (req, session) => {
   const { cursor, limit, paginated } = parsePaginationParams(req)
 
-  // Admins / platform users see all; org-scoped users see only their own entries.
-  const where = isOrgScoped(session) ? { actor: (session.user as any)?.email ?? '__none__' } : {}
+  // orgScope returns { orgId } for org-scoped users (filter by their org),
+  // or {} for admins/platform (see everything including orgId=null entries).
+  const where = orgScope(session)
 
   if (paginated) {
     // AuditLog uses `ts` not `createdAt` — manual cursor pagination

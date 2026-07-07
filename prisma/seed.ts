@@ -173,13 +173,30 @@ async function main() {
   }
   console.log(`  ✅ 3 Acme devices under ${acmeProject.name}`)
 
-  // ─── 1 gateway (platform-level — Gateway has no orgId) ────────────────
+  // ─── Gateways (Phase 14: orgId nullable — null=platform-shared, set=org-owned) ──
   await db.gateway.upsert({
     where: { mac: 'GW:01:AA:BB:CC:01' },
     update: {},
-    create: { name: 'GW-DEMO-01', mac: 'GW:01:AA:BB:CC:01', model: 'IndoS-GW-Pro', firmware: 'v1.0.0', ip: '10.20.0.1', status: 'online', deviceCount: 5, uptime: 99.9, location: 'Demo Factory' },
+    create: { name: 'GW-DEMO-01', mac: 'GW:01:AA:BB:CC:01', model: 'IndoS-GW-Pro', firmware: 'v1.0.0', ip: '10.20.0.1', status: 'online', deviceCount: 5, uptime: 99.9, location: 'Demo Factory', orgId: null },
   })
-  console.log(`  ✅ 1 gateway (platform-level)`)
+  // Acme-owned gateway (org-scoped — only Acme users + admins see it)
+  await db.gateway.upsert({
+    where: { mac: 'GW:AC:ME:00:00:01' },
+    update: {},
+    create: { name: 'GW-ACME-01', mac: 'GW:AC:ME:00:00:01', model: 'IndoS-GW-Lite', firmware: 'v1.0.0', ip: '10.30.0.1', status: 'online', deviceCount: 3, uptime: 98.5, location: 'Acme Plant A', orgId: 'org-acme' },
+  })
+  console.log(`  ✅ 2 gateways (1 platform-shared, 1 Acme-owned)`)
+
+  // ─── Cameras (Phase 14: orgId nullable) ────────────────────────────────
+  // Camera.name isn't unique, so use findFirst + create (idempotent by name).
+  for (const cam of [
+    { name: 'CAM-DEMO-01', location: 'Demo Factory — Line A', ip: '10.20.1.50', status: 'online', aiDetection: true, motionDetect: true, recording: true, resolution: '1080p', orgId: null },
+    { name: 'CAM-ACME-01', location: 'Acme Plant A — Floor', ip: '10.30.1.50', status: 'online', aiDetection: false, motionDetect: true, recording: false, resolution: '720p', orgId: 'org-acme' },
+  ]) {
+    const existing = await db.camera.findFirst({ where: { name: cam.name } })
+    if (!existing) await db.camera.create({ data: cam })
+  }
+  console.log(`  ✅ 2 cameras (1 platform-shared, 1 Acme-owned)`)
 
   // Platform settings
   const settings = [

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import { requireRole, hasRole, getRole, type Role } from '@/lib/rbac'
+import { orgScope, orgScopeWithPlatform, isOrgScoped, getOrgId } from '@/lib/org-scope'
 import type { Session } from 'next-auth'
 
 describe('RBAC: role hierarchy', () => {
@@ -184,5 +185,50 @@ describe('Phase 13 — admin-gate enforced server-side (not only UI hiding)', ()
       expect(hasRole(s, 'admin')).toBe(r === 'admin')
       expect(getRole(s)).toBe(r)
     }
+  })
+})
+
+// ─── Phase 14: orgScope + orgScopeWithPlatform unit tests ────────────────
+// Verifies the two scoping strategies:
+//   - orgScope: strict (own-org only) — used for Project, User, AuditLog
+//   - orgScopeWithPlatform: own-org + platform-shared (null) — Firmware, OtaJob, Gateway, Camera
+
+describe('Phase 14 — orgScopeWithPlatform (platform-shared + own-org)', () => {
+  it('admin → {} (sees everything, including other orgs + platform)', () => {
+    const s = mkSession('admin')
+    expect(orgScopeWithPlatform(s)).toEqual({})
+  })
+
+  it('platform user (null orgId) → {} (sees everything)', () => {
+    const s = { user: { name: 'T', email: 't@t.io', role: 'engineer', id: 'u1', orgId: null } } as any as Session
+    expect(orgScopeWithPlatform(s)).toEqual({})
+  })
+
+  it('org-scoped engineer → OR: [null, ownOrgId] (sees platform + own org, NOT other orgs)', () => {
+    const s = mkSession('engineer') // orgId = 'org-1' from mkSession
+    const result = orgScopeWithPlatform(s) as any
+    expect(result.OR).toBeDefined()
+    expect(result.OR).toHaveLength(2)
+    expect(result.OR[0]).toEqual({ orgId: null })
+    expect(result.OR[1]).toEqual({ orgId: 'org-1' })
+  })
+
+  it('null session → {} (defensive — apiHandler rejects before this is used)', () => {
+    expect(orgScopeWithPlatform(null)).toEqual({})
+  })
+})
+
+describe('Phase 14 — orgScope (strict own-org only)', () => {
+  it('admin → {} (cross-org)', () => {
+    expect(orgScope(mkSession('admin'))).toEqual({})
+  })
+
+  it('platform user (null orgId) → {} (backward compat)', () => {
+    const s = { user: { name: 'T', email: 't@t.io', role: 'engineer', id: 'u1', orgId: null } } as any as Session
+    expect(orgScope(s)).toEqual({})
+  })
+
+  it('org-scoped engineer → { orgId: ownOrgId }', () => {
+    expect(orgScope(mkSession('engineer'))).toEqual({ orgId: 'org-1' })
   })
 })
