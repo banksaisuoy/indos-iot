@@ -757,3 +757,40 @@ Stage Summary:
 - Production build NOT run (sandbox policy prohibits `bun run build`); tsc --noEmit + lint + 105 tests are the equivalent signals. Recommend `bun run build` in CI before pilot.
 - Remaining deployment risks documented in the Phase 13 report (sqlite vs postgres schema mismatch, no prisma seed in Docker CMD, useSecureCookies=false, audit IP hardcoded in some routes, no NEXTAUTH_URL).
 - Go/No-Go: CONDITIONAL GO for a single-tenant sqlite pilot behind Caddy with the env checklist satisfied; NO-GO for the full docker-compose postgres stack until P1.1 (postgres migration) is complete.
+
+---
+Task ID: PHASE13-GAP-AUDIT-AND-FIX
+Agent: orchestrator (main)
+Task: Audit every Phase (4–13) for sub-item completeness vs phase docs; fix verified gaps.
+
+Work Log:
+- Read all 12 phase docs in docs/worklogs/ + the worklog tail.
+- Verified key claims against actual source files (greps + reads):
+  - P4: auth.ts, middleware, login page, providers — all present. .env NEXTAUTH_SECRET claim was stale (only DATABASE_URL present) → FIXED.
+  - P5: mosquitto-acl.conf, provision-device.sh, devices.json, aedes authenticate/authorizePublish/authorizeSubscribe — all present ✓.
+  - P6: ota-signing.ts, manifest route, generate-ota-keys.ts, 8 tests — all present. OTA keys NOT in .env (claim stale) → FIXED (generated real keys, added to .env + .env.example).
+  - P7: influx.ts (write/query/isAvailable/flush), persistTelemetry in service, query API Influx-first — all present ✓.
+  - P8: all 23 /api/indos routes use apiHandler (23/23) ✓. rbac.ts, rate-limit.ts, pagination.ts, api-handler.ts ✓. Stale doc: audit role table said admin, but P11 changed to viewer+ → FIXED doc.
+  - P9: ioredis dep, cache.ts (cacheGet/Set/Del/cached), socket rooms (io.to project/global) — all present ✓.
+  - P10: 14 E2E tests (grep confirmed), metrics route, playwright config — all present ✓.
+  - P11: org-scope.ts (5 functions), 10 scoped routes, next-auth.d.ts, seed (2 orgs/2 users) — all present ✓.
+  - P12-A: connection-banner, critical-alarm-banner, alarm-sound, isStale/lastMessageAt, settings alerts section, wired in page.tsx — all present ✓. Stale doc: described the ack-fail-hides-alarm bug as intended → FIXED doc (noted P13 correction).
+  - P12-B: POST /users, PATCH /users/[id], POST /orgs, 3 schemas, LAST_ADMIN + CANNOT_DISABLE_SELF — all present ✓.
+  - P12-C: bulk-ack route, csv.ts, Ack All Critical/Active, Export CSV — all present ✓.
+  - P12-D: TelemetrySection, isStale, StaleBadge, Export CSV, prefill in store + ota-view — all present ✓.
+  - P13: ack-outcome.ts, auth-secret.ts, both tests, ota device validation — all present. MISSING: no docs/worklogs/PHASE_13_*.md (every other phase has one) → FIXED (created PHASE_13_PRODUCTION_READINESS.md). MISSING: ROADMAP Done table stopped at Phase 12 → FIXED (added Phase 13 row).
+
+Gaps found & fixed (6):
+1. .env.example MISSING entirely (claimed by P6/P7/P9 docs) → CREATED with full var documentation (DATABASE_URL, NEXTAUTH_SECRET, OTA_SIGNING_*, INFLUX_*, REDIS_URL, OPENROUTER_API_KEY) + deployment notes.
+2. .env had only DATABASE_URL (P4 claimed NEXTAUTH_SECRET added, P6 claimed OTA keys added) → ADDED NEXTAUTH_SECRET + generated real Ed25519 OTA signing keys + documented optional vars.
+3. docs/worklogs/PHASE_13_*.md missing (P13 only appended to worklog.md) → CREATED PHASE_13_PRODUCTION_READINESS.md.
+4. ROADMAP Done table stopped at Phase 12 → ADDED Phase 13 row + updated "Current state" summary.
+5. P8 doc audit role table stale (said admin, P11 changed to viewer+) → FIXED with inline note.
+6. P12-A doc described the ack-fail-hides-alarm bug as intended behavior → FIXED with P13 correction note.
+
+Stage Summary:
+- All 13 phases now have: source code matching claims + a standalone docs/worklogs/ phase doc + ROADMAP Done table entry.
+- .env + .env.example now document every required + optional variable; OTA signing works out of the box (real keys generated).
+- 105/105 tests pass; tsc 0 errors; lint 0 errors.
+- Stale-doc corrections applied to P8 (audit role) and P12-A (ack behavior).
+- Phase 11 documented follow-ups (AuditLog orgId, firmware/ota/gw orgId, MQTT namespacing, E2E org-scoping test) remain on the roadmap as P1 items — they were explicitly deferred, not missing.

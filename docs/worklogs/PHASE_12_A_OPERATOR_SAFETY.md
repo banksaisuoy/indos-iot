@@ -68,13 +68,14 @@ IndOS dashboard:
 
 ## Architecture Notes
 
-- The `CriticalAlarmBanner` calls `/api/indos/alarms/bulk-ack` defensively:
-  the endpoint is owned by a parallel agent (PHASE12-C). All three outcomes
-  (200 success, 404 not-yet-shipped, network error) are handled with
-  `.then(r => …).catch(() => …)` so the call never throws into the React
-  render path. The live in-memory alarms are always acked first via
-  `rt.ackAlarm(id)` so the banner disappears immediately regardless of the
-  endpoint state.
+- The `CriticalAlarmBanner` calls `/api/indos/alarms/bulk-ack` defensively.
+  **Phase 13 correction:** the original implementation acked live alarms +
+  dismissed the banner BEFORE the fetch resolved, hiding the banner even on
+  server failure. Phase 13 extracted a pure `decideAckOutcome(httpStatus,
+  liveCount)` in `src/lib/indos/ack-outcome.ts` — the banner now only
+  dismisses + acks-live on a confirmed 2xx; on any failure the banner stays
+  visible and live alarms stay active (10 unit tests cover all status codes).
+  The `.catch()` wrapper is retained so the fetch never throws into React.
 - The `ConnectionBanner` is purely informational — socket.io's built-in
   auto-reconnect handles recovery. No manual retry button is offered (the
   operator's only useful action is to wait or contact IT).

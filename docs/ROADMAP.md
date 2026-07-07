@@ -2,7 +2,7 @@
 
 > Living document. Updated after each phase. Priorities: **P0** (blocks production scale-out) → **P3** (long-term strategic).
 
-## Completed Phases (4–12)
+## Completed Phases (4–13)
 
 | Phase | Title | Key Outcome | Date |
 |-------|-------|-------------|------|
@@ -15,8 +15,9 @@
 | 10 | E2E Tests + Metrics + Audit | 14 Playwright tests + public `/api/metrics` + final security audit (55 total tests pass) | 2025-07 |
 | 11 | Per-Tenant `orgId` Scoping | `orgScope(session)` / `scopedProjectFilter` helpers applied to all list endpoints; admin cross-org, engineers org-scoped; second org + user seeded; `audit` opened to viewers (self-only); P2.7 real client-IP capture landed early | 2025-07 |
 | 12 | Field-Ops Hardening | Operator-safety banners (connection-loss + critical-alarm persistent banner + audio), real user/org management (POST/PATCH APIs + last-admin protection), bulk alarm ack + CSV export (alarms + devices), real device-detail actions (telemetry chart + OTA navigation), stale-device badge, alarm-sound toggle. Closes 10 real-world pain points identified in a plant-floor review. 81/81 tests pass. | 2025-07 |
+| 13 | Production Readiness Drill | Failure-drill across 13 scenarios; 3 verified production bugs fixed (ack-fail-no-hide, NEXTAUTH_SECRET prod fail-fast, OTA deleted-device validation); 24 new tests (105 total); `.env.example` created; deployment Go/No-Go issued. Conditional GO for single-tenant sqlite pilot. | 2025-07 |
 
-**Current state:** Production-ready for **multi-tenant** SaaS deployments AND validated against real plant-floor operator workflows. Per-tenant data isolation enforced. All operator-safety hazards (frozen telemetry, vanishing critical alarms, fake buttons, no CSV, no bulk ack) fixed. 81/81 unit tests pass. Lint + typecheck clean.
+**Current state:** Production-ready for **multi-tenant** SaaS deployments AND validated against real plant-floor operator workflows + a production-readiness failure drill. Per-tenant data isolation enforced. All operator-safety hazards fixed. NEXTAUTH_SECRET fails fast in production. 105/105 unit tests pass. Lint + typecheck clean. Conditional GO for a single-tenant sqlite pilot; NO-GO for the full Postgres compose stack until P1.1.
 
 ---
 

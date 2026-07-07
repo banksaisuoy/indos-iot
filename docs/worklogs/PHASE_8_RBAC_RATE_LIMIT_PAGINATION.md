@@ -43,7 +43,7 @@ All `/api/indos/*` routes now use `apiHandler()` or `authedHandler()` with RBAC 
 | `/settings` | GET | viewer | read | — |
 | `/orgs` | GET | viewer | read | — |
 | `/users` | GET | **admin** | read | — |
-| `/audit` | GET | **admin** | read | ✅ |
+| `/audit` | GET | viewer *(admin: all; non-admin: self-only — changed in Phase 11)* | read | ✅ |
 | `/plugins` | GET | viewer | read | — |
 | `/plugins` | POST | engineer | write | — |
 | `/firmware` | GET | viewer | read | ✅ |
