@@ -106,8 +106,9 @@ export const authOptions: NextAuthOptions = {
     },
   },
   secret: NEXTAUTH_SECRET,
-  // CRITICAL: trust the X-Forwarded-Host header so NextAuth knows the real domain
-  // (space-z.ai) instead of localhost:3000. Without this, NextAuth generates
-  // absolute URLs to localhost which browsers block via Private Network Access.
-  useSecureCookies: false,
+  // On HTTPS (production: Vercel/Render) use secure cookies so the browser
+  // sends them back. On HTTP (dev) use non-secure so cookies work on localhost.
+  // Without this, NextAuth on Vercel HTTPS sets `__Secure-` prefixed cookies
+  // but `useSecureCookies: false` reads the non-prefixed name → 401 on APIs.
+  useSecureCookies: process.env.NODE_ENV === 'production',
 }

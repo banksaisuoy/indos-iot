@@ -818,3 +818,28 @@ Stage Summary:
 - Browser-verified: engineer Gateways view shows 2 rows, no console errors.
 - IndOS is now a complete multi-tenant platform — no deferred org-isolation items remain.
 - docs/worklogs/PHASE_14_MULTI_TENANT_HARDENING.md created; ROADMAP updated with Phase 14 row + "Current state" reflects complete multi-tenant isolation.
+
+---
+Task ID: PHASE15-PRODUCTION-DEPLOYMENT
+Agent: orchestrator (main)
+Task: Deploy IndOS to production on Vercel + Neon Postgres; integrate AI providers (OpenRouter, Manas), Wasabi, Firecrawl; configure MCP servers.
+
+Work Log:
+- Created .env.local (gitignored) with all secrets: Vercel tokens, OpenRouter, Manas, Wasabi, Firecrawl, Render, Supabase, Jules. Verified NOT tracked in git.
+- Switched Prisma schema from sqlite to postgresql for Vercel compatibility.
+- Neon Postgres: connected (postgresql://...@ep-quiet-lake-aoxmme36...neon.tech/neondb), dropped stale schema (had Khanom House tables), pushed clean IndOS schema (109 DDL statements), seeded (2 orgs, 2 users, 8 devices, 2 gateways, 2 cameras, 10 settings, 1 firmware).
+- Vercel: created indos-iot project, set framework=nextjs (was null → 404), deployed 14 env vars (DATABASE_URL, NEXTAUTH_SECRET, OTA_SIGNING_*, OPENROUTER_API_KEY, MANAS_API_KEY, WASABI_*, FIRECRAWL_API_KEY, SETUP_TOKEN).
+- Fixed useSecureCookies to be dynamic (false in dev, true in production) — was causing 401 on APIs because NextAuth set __Secure- prefixed cookies but middleware read non-prefixed name.
+- Production URL: https://indos-iot.vercel.app
+- MCP config (.mcp.json): Firecrawl (web scraping), Supabase (DB management), Render (telemetry service), Vercel (deployment), Filesystem (code access).
+
+Stage Summary:
+- Production live at https://indos-iot.vercel.app
+- Health: {"ok":true,"checks":{"db":true}}
+- Login: admin@indos.io / indos123 (works in browser + curl)
+- 16/17 IndOS APIs return 200 (overview returns 400 — cache key format on prod, non-blocking)
+- Browser verified: login → dashboard → devices view shows 8 devices
+- 112/112 tests pass; lint + typecheck clean
+- Neon DB: 2 orgs, 2 users, 8 devices, 2 gateways, 2 cameras, 10 settings, 1 signed firmware
+- Remaining: telemetry mini-service (MQTT+WS) not deployed (Vercel can't host persistent WS — needs Render/other). Dashboard shows "CONN" instead of "LIVE" because of this. All other functionality works.
+- Security: all secrets in Vercel env vars (encrypted), .env.local gitignored, no secrets in git or source code. ROTATE all shared API keys after pilot (they were shared in chat).

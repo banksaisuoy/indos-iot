@@ -37,8 +37,9 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Protect everything EXCEPT: login page, NextAuth API, health check, and static assets
+  // Protect everything EXCEPT: login page, NextAuth API, health check, setup
+  // (one-time DB push, token-protected), and static assets
   matcher: [
-    '/((?!login|api/auth|api/health|api/metrics|_next/static|_next/image|favicon.ico|indos-logo.svg).*)',
+    '/((?!login|api/auth|api/health|api/metrics|api/setup|_next/static|_next/image|favicon.ico|indos-logo.svg).*)',
   ],
 }
