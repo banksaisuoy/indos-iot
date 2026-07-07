@@ -1,0 +1,720 @@
+     1→'use client'
+     2→import { useCallback, useEffect, useMemo, useState } from 'react'
+     3→import { useIndOS } from '@/lib/indos/store'
+     4→import { useRealtime } from '@/lib/indos/realtime'
+     5→import { KpiCard } from '@/components/indos/shared/kpi-card'
+     6→import { ViewHeader } from '@/components/indos/shared/view-header'
+     7→import { StatusBadge } from '@/components/indos/shared/status-badge'
+     8→import { LiveDot, Sparkline } from '@/components/indos/shared/charts'
+     9→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+    10→import { Button } from '@/components/ui/button'
+    11→import { Badge } from '@/components/ui/badge'
+    12→import { Input } from '@/components/ui/input'
+    13→import { Label } from '@/components/ui/label'
+    14→import { Progress } from '@/components/ui/progress'
+    15→import { Skeleton } from '@/components/ui/skeleton'
+    16→import { ScrollArea } from '@/components/ui/scroll-area'
+    17→import {
+    18→  Table, TableHeader, TableBody, TableRow, TableHead, TableCell,
+    19→} from '@/components/ui/table'
+    20→import {
+    21→  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+    22→} from '@/components/ui/dialog'
+    23→import {
+    24→  Select, SelectTrigger, SelectValue, SelectContent, SelectItem,
+    25→} from '@/components/ui/select'
+    26→import { toast } from 'sonner'
+    27→import {
+    28→  Cpu, Search, Wifi, Battery, Thermometer, MemoryStick, Radio,
+    29→  RefreshCw, ArrowUpFromLine, Activity, MapPin, Server, HardDrive, Signal,
+    30→  Download, Clock, ChevronDown, ChevronUp, Loader2, AlertTriangle, RotateCw,
+    31→} from 'lucide-react'
+    32→import { cn } from '@/lib/utils'
+    33→import { toCSV, downloadCSV, csvTimestamp } from '@/lib/csv'
+    34→
+    35→interface Device {
+    36→  id: string
+    37→  name: string
+    38→  mac: string
+    39→  serial: string | null
+    40→  type: string
+    41→  protocol: string
+    42→  firmware: string | null
+    43→  ip: string | null
+    44→  status: string
+    45→  cpu: number
+    46→  memory: number
+    47→  temperature: number
+    48→  signal: number
+    49→  battery: number | null
+    50→  lastSeen: string
+    51→  project?: { name: string; slug: string } | null
+    52→  machine?: { name: string } | null
+    53→}
+    54→
+    55→interface ProjectLite { slug: string; name: string }
+    56→
+    57→// Telemetry point shape returned by GET /api/indos/telemetry/[deviceId].
+    58→// Influx path: { ts, value, metric, unit }. SQLite path: { id, deviceId, metric, value, ts }.
+    59→interface TelemetryPoint {
+    60→  ts: string
+    61→  value: number
+    62→  metric: string
+    63→  unit?: string | null
+    64→}
+    65→
+    66→const DEVICE_TYPES = ['sensor', 'meter', 'gateway', 'plc', 'relay', 'camera', 'inverter', 'controller']
+    67→const STATUSES = ['online', 'offline', 'fault', 'maintenance']
+    68→
+    69→// A device is "stale" if it claims to be online but hasn't reported in 10+ min.
+    70→// Threshold chosen to catch silent network drops without false-positiving on
+    71→// long-interval pollers (most IndOS devices report ≤ 5 min intervals).
+    72→const STALE_THRESHOLD_MS = 10 * 60 * 1000
+    73→
+    74→function isStale(d: Device): boolean {
+    75→  if (d.status !== 'online') return false
+    76→  try {
+    77→    return Date.now() - new Date(d.lastSeen).getTime() > STALE_THRESHOLD_MS
+    78→  } catch {
+    79→    return false
+    80→  }
+    81→}
+    82→
+    83→const TYPE_CLS: Record<string, string> = {
+    84→  sensor: 'bg-sky-500/15 text-sky-400 ring-sky-500/30',
+    85→  meter: 'bg-amber-500/15 text-amber-400 ring-amber-500/30',
+    86→  gateway: 'bg-violet-500/15 text-violet-400 ring-violet-500/30',
+    87→  plc: 'bg-emerald-500/15 text-emerald-400 ring-emerald-500/30',
+    88→  relay: 'bg-rose-500/15 text-rose-400 ring-rose-500/30',
+    89→  camera: 'bg-violet-500/15 text-violet-400 ring-violet-500/30',
+    90→  inverter: 'bg-amber-500/15 text-amber-400 ring-amber-500/30',
+    91→  controller: 'bg-sky-500/15 text-sky-400 ring-sky-500/30',
+    92→}
+    93→
+    94→const PROTO_CLS: Record<string, string> = {
+    95→  mqtt: 'bg-emerald-500/15 text-emerald-400 ring-emerald-500/30',
+    96→  'modbus-rtu': 'bg-amber-500/15 text-amber-400 ring-amber-500/30',
+    97→  'modbus-tcp': 'bg-amber-500/15 text-amber-400 ring-amber-500/30',
+    98→  'opc-ua': 'bg-sky-500/15 text-sky-400 ring-sky-500/30',
+    99→  bacnet: 'bg-violet-500/15 text-violet-400 ring-violet-500/30',
+   100→  'ethernet-ip': 'bg-sky-500/15 text-sky-400 ring-sky-500/30',
+   101→  can: 'bg-rose-500/15 text-rose-400 ring-rose-500/30',
+   102→  lorawan: 'bg-emerald-500/15 text-emerald-400 ring-emerald-500/30',
+   103→  http: 'bg-slate-500/15 text-slate-400 ring-slate-500/30',
+   104→  ble: 'bg-sky-500/15 text-sky-400 ring-sky-500/30',
+   105→  zigbee: 'bg-violet-500/15 text-violet-400 ring-violet-500/30',
+   106→}
+   107→
+   108→// Sparkline palette — one color per metric, max 6 metrics shown.
+   109→const SPARK_COLORS = ['#34d399', '#fbbf24', '#38bdf8', '#f472b6', '#a78bfa', '#fb7185']
+   110→
+   111→function relTime(iso: string) {
+   112→  const diff = Date.now() - new Date(iso).getTime()
+   113→  const s = Math.floor(diff / 1000)
+   114→  if (s < 60) return `${s}s ago`
+   115→  const m = Math.floor(s / 60)
+   116→  if (m < 60) return `${m}m ago`
+   117→  const h = Math.floor(m / 60)
+   118→  if (h < 24) return `${h}h ago`
+   119→  const d = Math.floor(h / 24)
+   120→  return `${d}d ago`
+   121→}
+   122→
+   123→function StaleBadge({ className }: { className?: string }) {
+   124→  return (
+   125→    <Badge
+   126→      variant="outline"
+   127→      className={cn(
+   128→        'bg-amber-500/10 text-amber-400 ring-amber-500/30',
+   129→        'inline-flex items-center gap-1 px-1.5 py-0 text-[10px] font-medium uppercase',
+   130→        className,
+   131→      )}
+   132→      title="Device claims online but has not reported in over 10 minutes — investigate."
+   133→    >
+   134→      <Clock className="h-2.5 w-2.5" /> stale
+   135→    </Badge>
+   136→  )
+   137→}
+   138→
+   139→export function DevicesView() {
+   140→  const { setView, setPrefillDevice } = useIndOS()
+   141→  const { activeProject } = useIndOS()
+   142→  const rt = useRealtime()
+   143→  const [devices, setDevices] = useState<Device[] | null>(null)
+   144→  const [projects, setProjects] = useState<ProjectLite[]>([])
+   145→  const [loading, setLoading] = useState(true)
+   146→  const [project, setProject] = useState<string>(activeProject || 'all')
+   147→  const [type, setType] = useState<string>('all')
+   148→  const [status, setStatus] = useState<string>('all')
+   149→  const [query, setQuery] = useState('')
+   150→  const [selected, setSelected] = useState<Device | null>(null)
+   151→  const [telemetryOpen, setTelemetryOpen] = useState(false)
+   152→
+   153→  useEffect(() => {
+   154→    let cancelled = false
+   155→    void (async () => {
+   156→      try {
+   157→        const r = await fetch('/api/indos/projects')
+   158→        const d = (await r.json()) as any[]
+   159→        if (!cancelled) setProjects(d.map(p => ({ slug: p.slug, name: p.name })))
+   160→      } catch {
+   161→        if (!cancelled) setProjects([])
+   162→      }
+   163→    })()
+   164→    return () => { cancelled = true }
+   165→  }, [])
+   166→
+   167→  // Fetch devices whenever filters change.
+   168→  useEffect(() => {
+   169→    let cancelled = false
+   170→    void (async () => {
+   171→      setLoading(true)
+   172→      try {
+   173→        const params = new URLSearchParams()
+   174→        if (project && project !== 'all') params.set('project', project)
+   175→        if (type && type !== 'all') params.set('type', type)
+   176→        if (status && status !== 'all') params.set('status', status)
+   177→        const r = await fetch(`/api/indos/devices?${params.toString()}`)
+   178→        const d = (await r.json()) as Device[]
+   179→        if (!cancelled) setDevices(d)
+   180→      } catch {
+   181→        if (!cancelled) setDevices([])
+   182→      } finally {
+   183→        if (!cancelled) setLoading(false)
+   184→      }
+   185→    })()
+   186→    return () => { cancelled = true }
+   187→  }, [project, type, status])
+   188→
+   189→  const refresh = () => {
+   190→    let cancelled = false
+   191→    void (async () => {
+   192→      setLoading(true)
+   193→      try {
+   194→        const params = new URLSearchParams()
+   195→        if (project && project !== 'all') params.set('project', project)
+   196→        if (type && type !== 'all') params.set('type', type)
+   197→        if (status && status !== 'all') params.set('status', status)
+   198→        const r = await fetch(`/api/indos/devices?${params.toString()}`)
+   199→        const d = (await r.json()) as Device[]
+   200→        if (!cancelled) setDevices(d)
+   201→      } catch {
+   202→        if (!cancelled) setDevices([])
+   203→      } finally {
+   204→        if (!cancelled) setLoading(false)
+   205→      }
+   206→    })()
+   207→    toast.success('Device list refreshed')
+   208→  }
+   209→
+   210→  const stats = useMemo(() => {
+   211→    if (!devices) return { total: 0, online: 0, offline: 0, fault: 0, avgSignal: 0 }
+   212→    const online = devices.filter(d => d.status === 'online').length
+   213→    const offline = devices.filter(d => d.status === 'offline').length
+   214→    const fault = devices.filter(d => d.status === 'fault').length
+   215→    const avgSignal = devices.length ? devices.reduce((s, d) => s + (d.signal || 0), 0) / devices.length : 0
+   216→    return { total: devices.length, online, offline, fault, avgSignal }
+   217→  }, [devices])
+   218→
+   219→  // Live vital lookup by device id and name
+   220→  const liveVitalFor = useCallback((d: Device) => {
+   221→    if (rt.vitals[d.id]) return rt.vitals[d.id]
+   222→    const byName = Object.values(rt.vitals).find(v => v.name && d.name.toLowerCase().includes(v.name.toLowerCase()))
+   223→    return byName || null
+   224→  }, [rt.vitals])
+   225→
+   226→  const filtered = useMemo(() => {
+   227→    if (!devices) return []
+   228→    if (!query) return devices
+   229→    const q = query.toLowerCase()
+   230→    return devices.filter(d => d.name.toLowerCase().includes(q) || d.mac.toLowerCase().includes(q) || (d.ip || '').toLowerCase().includes(q))
+   231→  }, [devices, query])
+   232→
+   233→  // CSV export — exports the CURRENT filtered list (respects search + filter bar).
+   234→  function exportCSV() {
+   235→    if (!filtered.length) {
+   236→      toast.info('No devices to export', { description: 'Adjust your filters and try again.' })
+   237→      return
+   238→    }
+   239→    const headers = [
+   240→      'Name', 'MAC', 'Serial', 'Type', 'Protocol', 'Project', 'Machine',
+   241→      'Status', 'Stale', 'Firmware', 'IP', 'CPU%', 'Memory%', 'Temperature',
+   242→      'Signal', 'Battery%', 'LastSeen(ISO)', 'LastSeen(Local)',
+   243→    ]
+   244→    const rows = filtered.map(d => [
+   245→      d.name,
+   246→      d.mac,
+   247→      d.serial || '',
+   248→      d.type,
+   249→      d.protocol,
+   250→      d.project?.name || '',
+   251→      d.machine?.name || '',
+   252→      d.status,
+   253→      isStale(d) ? 'yes' : 'no',
+   254→      d.firmware || '',
+   255→      d.ip || '',
+   256→      d.cpu.toFixed(1),
+   257→      d.memory.toFixed(1),
+   258→      d.temperature.toFixed(1),
+   259→      d.signal.toFixed(0),
+   260→      d.battery != null ? d.battery.toFixed(0) : '',
+   261→      new Date(d.lastSeen).toISOString(),
+   262→      new Date(d.lastSeen).toLocaleString(),
+   263→    ])
+   264→    const csv = toCSV(headers, rows)
+   265→    downloadCSV(`indos-devices-${csvTimestamp()}.csv`, csv)
+   266→    toast.success(`Exported ${filtered.length} device${filtered.length === 1 ? '' : 's'} to CSV`, {
+   267→      description: `indos-devices-${csvTimestamp()}.csv`,
+   268→    })
+   269→  }
+   270→
+   271→  return (
+   272→    <div className="space-y-5 p-4 sm:p-6">
+   273→      <ViewHeader
+   274→        title="Devices"
+   275→        description="Edge devices, sensors, PLCs and controllers registered across the platform. Live vitals overlay when available."
+   276→        icon={<Cpu className="h-5 w-5" />}
+   277→        actions={
+   278→          <>
+   279→            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={exportCSV} disabled={loading || !filtered.length}>
+   280→              <Download className="h-3.5 w-3.5" /> Export CSV
+   281→            </Button>
+   282→            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={refresh}>
+   283→              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+   284→            </Button>
+   285→          </>
+   286→        }
+   287→      />
+   288→
+   289→      {/* KPI row */}
+   290→      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4 xl:grid-cols-5">
+   291→        <KpiCard label="Total Devices" value={loading ? '—' : stats.total} icon={Cpu} accent="emerald" hint="registered fleet" />
+   292→        <KpiCard label="Online" value={loading ? '—' : stats.online} icon={Activity} accent="emerald" hint={`${stats.total ? ((stats.online / stats.total) * 100).toFixed(0) : 0}% available`} />
+   293→        <KpiCard label="Offline" value={loading ? '—' : stats.offline} icon={Server} accent="slate" hint="awaiting heartbeat" />
+   294→        <KpiCard label="Fault" value={loading ? '—' : stats.fault} icon={Radio} accent="rose" hint="requires attention" />
+   295→        <KpiCard label="Avg Signal" value={loading ? '—' : stats.avgSignal.toFixed(0)} unit="dBm" icon={Signal} accent="sky" className="col-span-2 lg:col-span-1" />
+   296→      </div>
+   297→
+   298→      {/* Filter bar */}
+   299→      <Card className="p-3">
+   300→        <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+   301→          <div className="relative flex-1">
+   302→            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+   303→            <Input
+   304→              value={query}
+   305→              onChange={(e) => setQuery(e.target.value)}
+   306→              placeholder="Search by name, MAC or IP…"
+   307→              className="h-9 pl-8"
+   308→            />
+   309→          </div>
+   310→          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex">
+   311→            <Select value={project} onValueChange={setProject}>
+   312→              <SelectTrigger className="h-9 w-full lg:w-[180px]">
+   313→                <SelectValue placeholder="Project" />
+   314→              </SelectTrigger>
+   315→              <SelectContent>
+   316→                <SelectItem value="all">All projects</SelectItem>
+   317→                {projects.map(p => <SelectItem key={p.slug} value={p.slug}>{p.name}</SelectItem>)}
+   318→              </SelectContent>
+   319→            </Select>
+   320→            <Select value={type} onValueChange={setType}>
+   321→              <SelectTrigger className="h-9 w-full lg:w-[140px]">
+   322→                <SelectValue placeholder="Type" />
+   323→              </SelectTrigger>
+   324→              <SelectContent>
+   325→                <SelectItem value="all">All types</SelectItem>
+   326→                {DEVICE_TYPES.map(t => <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>)}
+   327→              </SelectContent>
+   328→            </Select>
+   329→            <Select value={status} onValueChange={setStatus}>
+   330→              <SelectTrigger className="h-9 w-full lg:w-[140px]">
+   331→                <SelectValue placeholder="Status" />
+   332→              </SelectTrigger>
+   333→              <SelectContent>
+   334→                <SelectItem value="all">All statuses</SelectItem>
+   335→                {STATUSES.map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}
+   336→              </SelectContent>
+   337→            </Select>
+   338→          </div>
+   339→        </div>
+   340→      </Card>
+   341→
+   342→      {/* Devices table */}
+   343→      <Card className="gap-0 p-0">
+   344→        <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b border-border/50 px-4 py-3">
+   345→          <div>
+   346→            <CardTitle className="flex items-center gap-2 text-base">
+   347→              <Cpu className="h-4 w-4 text-sky-400" /> Device Registry
+   348→              <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+   349→                <LiveDot color="bg-emerald-400" /> {Object.keys(rt.vitals).length} live
+   350→              </Badge>
+   351→            </CardTitle>
+   352→            <CardDescription className="text-xs">{loading ? 'Loading…' : `${filtered.length} of ${devices?.length ?? 0} devices shown`}</CardDescription>
+   353→          </div>
+   354→        </CardHeader>
+   355→        <CardContent className="p-0">
+   356→          {loading ? (
+   357→            <div className="space-y-2 p-4">
+   358→              {Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+   359→            </div>
+   360→          ) : filtered.length === 0 ? (
+   361→            <div className="flex flex-col items-center justify-center gap-2 py-12 text-center">
+   362→              <Cpu className="h-8 w-8 text-muted-foreground" />
+   363→              <p className="text-sm text-muted-foreground">No devices match your filters.</p>
+   364→            </div>
+   365→          ) : (
+   366→            <ScrollArea className="indos-scroll max-h-[560px]">
+   367→              <Table>
+   368→                <TableHeader className="sticky top-0 z-10 bg-card">
+   369→                  <TableRow className="border-border/50 hover:bg-transparent">
+   370→                    <TableHead className="pl-4 text-xs uppercase text-muted-foreground">Device</TableHead>
+   371→                    <TableHead className="text-xs uppercase text-muted-foreground">Type / Protocol</TableHead>
+   372→                    <TableHead className="text-xs uppercase text-muted-foreground">Project</TableHead>
+   373→                    <TableHead className="text-xs uppercase text-muted-foreground">Status</TableHead>
+   374→                    <TableHead className="text-xs uppercase text-muted-foreground">Vitals</TableHead>
+   375→                    <TableHead className="text-xs uppercase text-muted-foreground">Firmware</TableHead>
+   376→                    <TableHead className="pr-4 text-xs uppercase text-muted-foreground">Last Seen</TableHead>
+   377→                  </TableRow>
+   378→                </TableHeader>
+   379→                <TableBody>
+   380→                  {filtered.map(d => {
+   381→                    const live = liveVitalFor(d)
+   382→                    const stale = isStale(d)
+   383→                    return (
+   384→                      <TableRow
+   385→                        key={d.id}
+   386→                        className="cursor-pointer border-border/40"
+   387→                        onClick={() => { setSelected(d); setTelemetryOpen(false) }}
+   388→                      >
+   389→                        <TableCell className="pl-4">
+   390→                          <div className="flex items-center gap-2">
+   391→                            <div className={cn('flex h-7 w-7 items-center justify-center rounded-md ring-1', TYPE_CLS[d.type] || TYPE_CLS.sensor)}>
+   392→                              <Cpu className="h-3.5 w-3.5" />
+   393→                            </div>
+   394→                            <div className="min-w-0">
+   395→                              <p className="truncate text-xs font-medium">{d.name}</p>
+   396→                              <p className="text-[10px] text-muted-foreground">{d.mac}{d.ip ? ` · ${d.ip}` : ''}</p>
+   397→                            </div>
+   398→                          </div>
+   399→                        </TableCell>
+   400→                        <TableCell>
+   401→                          <div className="flex flex-wrap gap-1">
+   402→                            <Badge variant="outline" className={cn('ring-1 capitalize', TYPE_CLS[d.type] || TYPE_CLS.sensor)}>{d.type}</Badge>
+   403→                            <Badge variant="outline" className={cn('ring-1 uppercase', PROTO_CLS[d.protocol] || PROTO_CLS.http)}>{d.protocol}</Badge>
+   404→                          </div>
+   405→                        </TableCell>
+   406→                        <TableCell className="text-xs">
+   407→                          <p className="truncate">{d.project?.name || 'Unassigned'}</p>
+   408→                          {d.machine?.name && <p className="text-[10px] text-muted-foreground">{d.machine.name}</p>}
+   409→                        </TableCell>
+   410→                        <TableCell>
+   411→                          <div className="flex items-center gap-1.5">
+   412→                            <StatusBadge status={d.status} />
+   413→                            {stale && <StaleBadge />}
+   414→                            {live && d.status === 'online' && !stale && <LiveDot color="bg-emerald-400" />}
+   415→                          </div>
+   416→                        </TableCell>
+   417→                        <TableCell>
+   418→                          <div className="grid w-[140px] grid-cols-2 gap-x-2 gap-y-1">
+   419→                            <VitalMini icon={Cpu} label="CPU" value={live?.cpu ?? d.cpu} unit="%" />
+   420→                            <VitalMini icon={MemoryStick} label="Mem" value={live?.memory ?? d.memory} unit="%" />
+   421→                            <VitalMini icon={Thermometer} label="Temp" value={live?.temperature ?? d.temperature} unit="°" />
+   422→                            <VitalMini icon={Signal} label="Sig" value={live?.signal ?? d.signal} unit="" raw />
+   423→                          </div>
+   424→                        </TableCell>
+   425→                        <TableCell className="text-[11px] text-muted-foreground">{d.firmware || '—'}</TableCell>
+   426→                        <TableCell className="pr-4 text-[11px] text-muted-foreground">
+   427→                          <span className={cn(stale && 'font-medium text-amber-400')}>{relTime(d.lastSeen)}</span>
+   428→                        </TableCell>
+   429→                      </TableRow>
+   430→                    )
+   431→                  })}
+   432→                </TableBody>
+   433→              </Table>
+   434→            </ScrollArea>
+   435→          )}
+   436→        </CardContent>
+   437→      </Card>
+   438→
+   439→      {/* Detail Dialog */}
+   440→      <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
+   441→        <DialogContent className="sm:max-w-3xl">
+   442→          {selected && (() => {
+   443→            const live = liveVitalFor(selected)
+   444→            const stale = isStale(selected)
+   445→            return (
+   446→              <>
+   447→                <DialogHeader>
+   448→                  <div className="flex items-start justify-between gap-3">
+   449→                    <div>
+   450→                      <DialogTitle className="flex items-center gap-2 text-xl">
+   451→                        <div className={cn('flex h-8 w-8 items-center justify-center rounded-md ring-1', TYPE_CLS[selected.type] || TYPE_CLS.sensor)}>
+   452→                          <Cpu className="h-4 w-4" />
+   453→                        </div>
+   454→                        {selected.name}
+   455→                      </DialogTitle>
+   456→                      <DialogDescription className="mt-1.5">
+   457→                        {selected.project?.name || 'Unassigned'}{selected.machine?.name ? ` · ${selected.machine.name}` : ''}
+   458→                      </DialogDescription>
+   459→                    </div>
+   460→                    <div className="flex items-center gap-2">
+   461→                      {live && selected.status === 'online' && !stale && (
+   462→                        <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
+   463→                          <LiveDot color="bg-emerald-400" /> LIVE
+   464→                        </Badge>
+   465→                      )}
+   466→                      <StatusBadge status={selected.status} />
+   467→                      {stale && <StaleBadge />}
+   468→                    </div>
+   469→                  </div>
+   470→                </DialogHeader>
+   471→                <div className="space-y-4">
+   472→                  {/* Vitals grid */}
+   473→                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+   474→                    <VitalCard icon={Cpu} label="CPU" value={live?.cpu ?? selected.cpu} unit="%" color="bg-sky-500" />
+   475→                    <VitalCard icon={MemoryStick} label="Memory" value={live?.memory ?? selected.memory} unit="%" color="bg-violet-500" />
+   476→                    <VitalCard icon={Thermometer} label="Temperature" value={live?.temperature ?? selected.temperature} unit="°C" color="bg-rose-500" />
+   477→                    <VitalCard icon={Signal} label="Signal" value={live?.signal ?? selected.signal} unit="dBm" color="bg-emerald-500" />
+   478→                  </div>
+   479→                  {selected.battery != null && (
+   480→                    <div className="flex items-center gap-3 rounded-md border border-border/60 bg-card/40 p-3">
+   481→                      <Battery className="h-4 w-4 text-amber-400" />
+   482→                      <span className="text-xs text-muted-foreground">Battery</span>
+   483→                      <Progress value={selected.battery} className="h-2 flex-1" indicatorClassName="bg-amber-500" />
+   484→                      <span className="text-xs font-semibold tnum">{selected.battery.toFixed(0)}%</span>
+   485→                    </div>
+   486→                  )}
+   487→                  {/* Metadata */}
+   488→                  <div className="grid grid-cols-2 gap-3 rounded-md border border-border/60 bg-card/40 p-3 text-xs sm:grid-cols-3">
+   489→                    <Meta label="MAC Address" value={selected.mac} mono />
+   490→                    <Meta label="Serial" value={selected.serial || '—'} mono />
+   491→                    <Meta label="IP Address" value={selected.ip || '—'} mono />
+   492→                    <Meta label="Type" value={selected.type} />
+   493→                    <Meta label="Protocol" value={selected.protocol} />
+   494→                    <Meta label="Firmware" value={selected.firmware || '—'} mono />
+   495→                  </div>
+   496→
+   497→                  {/* Telemetry history section — fetches on first expand */}
+   498→                  <TelemetrySection
+   499→                    deviceId={selected.id}
+   500→                    deviceName={selected.name}
+   501→                    open={telemetryOpen}
+   502→                    onToggle={() => setTelemetryOpen(o => !o)}
+   503→                  />
+   504→                </div>
+   505→                <DialogFooter className="gap-2">
+   506→                  <Button variant="outline" size="sm" onClick={() => setSelected(null)}>Close</Button>
+   507→                  <Button
+   508→                    variant="outline"
+   509→                    size="sm"
+   510→                    className="gap-1.5"
+   511→                    onClick={() => setTelemetryOpen(o => !o)}
+   512→                  >
+   513→                    <Activity className="h-3.5 w-3.5" />
+   514→                    {telemetryOpen ? 'Hide telemetry' : 'View telemetry'}
+   515→                  </Button>
+   516→                  <Button
+   517→                    size="sm"
+   518→                    className="gap-1.5"
+   519→                    onClick={() => {
+   520→                      // Hand off to OTA view — it reads prefillDeviceId on mount
+   521→                      // and pre-selects this device in the deploy form.
+   522→                      setPrefillDevice(selected.id, selected.name)
+   523→                      setSelected(null)
+   524→                      setView('ota')
+   525→                      toast.info('Opened OTA deployment', {
+   526→                        description: `Pre-selected ${selected.name} — choose a firmware to deploy.`,
+   527→                      })
+   528→                    }}
+   529→                  >
+   530→                    <ArrowUpFromLine className="h-3.5 w-3.5" /> Send OTA
+   531→                  </Button>
+   532→                </DialogFooter>
+   533→              </>
+   534→            )
+   535→          })()}
+   536→        </DialogContent>
+   537→      </Dialog>
+   538→    </div>
+   539→  )
+   540→}
+   541→
+   542→// ─── Telemetry section (real fetch + chart) ──────────────────────────────────
+   543→function TelemetrySection({
+   544→  deviceId, deviceName, open, onToggle,
+   545→}: {
+   546→  deviceId: string
+   547→  deviceName: string
+   548→  open: boolean
+   549→  onToggle: () => void
+   550→}) {
+   551→  const [points, setPoints] = useState<TelemetryPoint[] | null>(null)
+   552→  const [loadingT, setLoadingT] = useState(false)
+   553→  const [error, setError] = useState<string | null>(null)
+   554→  const [fetchedFor, setFetchedFor] = useState<string | null>(null)
+   555→
+   556→  const fetchTelemetry = useCallback(() => {
+   557→    setLoadingT(true)
+   558→    setError(null)
+   559→    fetch(`/api/indos/telemetry/${encodeURIComponent(deviceId)}?range=24h`)
+   560→      .then(r => {
+   561→        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+   562→        return r.json() as Promise<TelemetryPoint[]>
+   563→      })
+   564→      .then(data => {
+   565→        if (!Array.isArray(data)) {
+   566→          setPoints([])
+   567→        } else {
+   568→          // Sort chronologically (some backends return desc — normalize).
+   569→          setPoints([...data].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()))
+   570→        }
+   571→        setFetchedFor(deviceId)
+   572→        setLoadingT(false)
+   573→      })
+   574→      .catch(err => {
+   575→        setError(err?.message || 'Failed to load telemetry')
+   576→        setLoadingT(false)
+   577→      })
+   578→  }, [deviceId])
+   579→
+   580→  // Fetch on first open (and when device changes while open).
+   581→  useEffect(() => {
+   582→    if (!open) return
+   583→    if (fetchedFor === deviceId && points !== null) return
+   584→    fetchTelemetry()
+   585→  }, [open, deviceId, fetchedFor, points, fetchTelemetry])
+   586→
+   587→  if (!open) return null
+   588→
+   589→  return (
+   590→    <div className="rounded-md border border-border/60 bg-card/40">
+   591→      <div className="flex items-center justify-between border-b border-border/50 px-3 py-2">
+   592→        <div className="flex items-center gap-2">
+   593→          <Activity className="h-3.5 w-3.5 text-sky-400" />
+   594→          <span className="text-xs font-medium">Telemetry history · 24h</span>
+   595→          <Badge variant="outline" className="bg-muted/40 text-[10px] text-muted-foreground">
+   596→            {deviceName}
+   597→          </Badge>
+   598→        </div>
+   599→        <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-[11px]" onClick={onToggle}>
+   600→          Collapse <ChevronUp className="h-3 w-3" />
+   601→        </Button>
+   602→      </div>
+   603→      <div className="p-3">
+   604→        {loadingT ? (
+   605→          <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+   606→            <Loader2 className="h-4 w-4 animate-spin" /> Loading telemetry…
+   607→          </div>
+   608→        ) : error ? (
+   609→          <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+   610→            <AlertTriangle className="h-5 w-5 text-rose-400" />
+   611→            <p className="text-xs text-muted-foreground">Failed to load telemetry — {error}</p>
+   612→            <Button variant="outline" size="sm" className="h-7 gap-1 text-[11px]" onClick={fetchTelemetry}>
+   613→              <RotateCw className="h-3 w-3" /> Retry
+   614→            </Button>
+   615→          </div>
+   616→        ) : !points || points.length === 0 ? (
+   617→          <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+   618→            <Activity className="h-5 w-5 text-muted-foreground" />
+   619→            <p className="text-xs text-muted-foreground">No telemetry history for this device in the last 24h.</p>
+   620→          </div>
+   621→        ) : (
+   622→          <TelemetryMetrics points={points} />
+   623→        )}
+   624→      </div>
+   625→    </div>
+   626→  )
+   627→}
+   628→
+   629→function TelemetryMetrics({ points }: { points: TelemetryPoint[] }) {
+   630→  // Group points by metric, then take the top 6 metrics by point count.
+   631→  const metrics = useMemo(() => {
+   632→    const byMetric = new Map<string, TelemetryPoint[]>()
+   633→    for (const p of points) {
+   634→      const arr = byMetric.get(p.metric) || []
+   635→      arr.push(p)
+   636→      byMetric.set(p.metric, arr)
+   637→    }
+   638→    const entries = Array.from(byMetric.entries())
+   639→      .map(([metric, pts]) => {
+   640→        const values = pts.map(p => p.value).filter(v => Number.isFinite(v))
+   641→        const latest = values.length ? values[values.length - 1] : NaN
+   642→        const min = values.length ? Math.min(...values) : NaN
+   643→        const max = values.length ? Math.max(...values) : NaN
+   644→        const unit = pts.find(p => p.unit)?.unit || ''
+   645→        return { metric, pts, values, latest, min, max, unit }
+   646→      })
+   647→      .sort((a, b) => b.pts.length - a.pts.length)
+   648→      .slice(0, 6)
+   649→    return entries
+   650→  }, [points])
+   651→
+   652→  return (
+   653→    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+   654→      {metrics.map((m, i) => {
+   655→        const color = SPARK_COLORS[i % SPARK_COLORS.length]
+   656→        const rangeText = Number.isFinite(m.min) && Number.isFinite(m.max)
+   657→          ? `${m.min.toFixed(1)} – ${m.max.toFixed(1)}`
+   658→          : '—'
+   659→        return (
+   660→          <div key={m.metric} className="rounded-md border border-border/50 bg-background/40 p-2.5">
+   661→            <div className="flex items-center justify-between">
+   662→              <span className="text-[11px] font-medium capitalize text-foreground">{m.metric}</span>
+   663→              <span className="text-[10px] text-muted-foreground">
+   664→                {m.pts.length} pts · {rangeText} {m.unit}
+   665→              </span>
+   666→            </div>
+   667→            <div className="mt-1 flex items-end justify-between gap-2">
+   668→              <div>
+   669→                <p className="text-lg font-bold tnum">
+   670→                  {Number.isFinite(m.latest) ? m.latest.toFixed(1) : '—'}
+   671→                  <span className="ml-1 text-[10px] font-normal text-muted-foreground">{m.unit}</span>
+   672→                </p>
+   673→                <p className="text-[10px] text-muted-foreground">latest value</p>
+   674→              </div>
+   675→              <div className="h-9 w-28">
+   676→                <Sparkline data={m.values.length ? m.values : [0, 0]} color={color} height={36} />
+   677→              </div>
+   678→            </div>
+   679→          </div>
+   680→        )
+   681→      })}
+   682→    </div>
+   683→  )
+   684→}
+   685→
+   686→function VitalMini({ icon: Icon, label, value, unit, raw }: { icon: any; label: string; value: number; unit: string; raw?: boolean }) {
+   687→  const pct = raw ? Math.max(0, Math.min(100, (value + 120) / 1.2)) : Math.max(0, Math.min(100, value))
+   688→  const colorCls = pct > 80 ? 'bg-rose-500' : pct > 60 ? 'bg-amber-500' : 'bg-emerald-500'
+   689→  return (
+   690→    <div>
+   691→      <div className="mb-0.5 flex items-center justify-between text-[10px] text-muted-foreground">
+   692→        <span className="flex items-center gap-0.5"><Icon className="h-2.5 w-2.5" />{label}</span>
+   693→        <span className="font-medium tnum">{value.toFixed(0)}{unit}</span>
+   694→      </div>
+   695→      <Progress value={pct} className="h-1 bg-muted/40" indicatorClassName={colorCls} />
+   696→    </div>
+   697→  )
+   698→}
+   699→
+   700→function VitalCard({ icon: Icon, label, value, unit, color }: { icon: any; label: string; value: number; unit: string; color: string }) {
+   701→  return (
+   702→    <div className="rounded-md border border-border/60 bg-card/40 p-3">
+   703→      <div className="flex items-center justify-between">
+   704→        <span className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground"><Icon className="h-3 w-3" />{label}</span>
+   705→      </div>
+   706→      <p className="mt-1 text-xl font-bold tnum">{value.toFixed(0)}<span className="text-xs text-muted-foreground"> {unit}</span></p>
+   707→      <Progress value={Math.min(100, value)} className="mt-1.5 h-1 bg-muted/40" indicatorClassName={color} />
+   708→    </div>
+   709→  )
+   710→}
+   711→
+   712→function Meta({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+   713→  return (
+   714→    <div>
+   715→      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+   716→      <p className={cn('mt-0.5 font-medium capitalize', mono && 'font-mono text-[11px] normal-case')}>{value}</p>
+   717→    </div>
+   718→  )
+   719→}
+   720→

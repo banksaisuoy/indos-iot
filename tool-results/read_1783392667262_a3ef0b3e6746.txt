@@ -1,0 +1,482 @@
+     1→'use client'
+     2→import { useEffect, useState } from 'react'
+     3→import { toast } from 'sonner'
+     4→import { KpiCard } from '@/components/indos/shared/kpi-card'
+     5→import { ViewHeader } from '@/components/indos/shared/view-header'
+     6→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+     7→import { Badge } from '@/components/ui/badge'
+     8→import { Button } from '@/components/ui/button'
+     9→import { Switch } from '@/components/ui/switch'
+    10→import { Skeleton } from '@/components/ui/skeleton'
+    11→import { Separator } from '@/components/ui/separator'
+    12→import { ScrollArea } from '@/components/ui/scroll-area'
+    13→import {
+    14→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    15→} from '@/components/ui/select'
+    16→import { cn } from '@/lib/utils'
+    17→import {
+    18→  Settings, Sliders, Network, ShieldCheck, Activity, Bot, DatabaseBackup, KeySquare, Edit, ExternalLink, Cpu, Server, Boxes, Radio, HardDrive, Workflow, Lock, Fingerprint, Bug, Globe, FileBarChart, LineChart, Search, Camera, Sparkles, History, RotateCcw, CheckCircle2, CircuitBoard, Wifi, ShieldAlert, Gauge,
+    19→} from 'lucide-react'
+    20→
+    21→type Settings = Record<string, Record<string, string>>
+    22→
+    23→type Section = 'general' | 'connectivity' | 'security' | 'observability' | 'ai' | 'backup' | 'license'
+    24→
+    25→const NAV: { id: Section; label: string; icon: any }[] = [
+    26→  { id: 'general', label: 'General', icon: Sliders },
+    27→  { id: 'connectivity', label: 'Connectivity', icon: Network },
+    28→  { id: 'security', label: 'Security', icon: ShieldCheck },
+    29→  { id: 'observability', label: 'Observability', icon: Activity },
+    30→  { id: 'ai', label: 'AI / ML', icon: Bot },
+    31→  { id: 'backup', label: 'Backup', icon: DatabaseBackup },
+    32→  { id: 'license', label: 'License', icon: KeySquare },
+    33→]
+    34→
+    35→function val(s: Settings | null, cat: string, key: string, fallback = '—') {
+    36→  return s?.[cat]?.[key] || fallback
+    37→}
+    38→
+    39→function ServiceCard({
+    40→  icon: Icon, name, status = 'healthy', endpoint, version, onConfigure, accent = 'emerald',
+    41→}: {
+    42→  icon: any; name: string; status?: 'healthy' | 'degraded' | 'down'; endpoint?: string; version?: string; onConfigure?: () => void; accent?: 'emerald' | 'sky' | 'amber' | 'violet' | 'rose'
+    43→}) {
+    44→  const dot = status === 'healthy' ? 'bg-emerald-400' : status === 'degraded' ? 'bg-amber-400' : 'bg-rose-400'
+    45→  const statusLabel = status === 'healthy' ? 'Healthy' : status === 'degraded' ? 'Degraded' : 'Down'
+    46→  const accentMap: Record<string, string> = {
+    47→    emerald: 'text-emerald-400 bg-emerald-500/10 ring-emerald-500/20',
+    48→    sky: 'text-sky-400 bg-sky-500/10 ring-sky-500/20',
+    49→    amber: 'text-amber-400 bg-amber-500/10 ring-amber-500/20',
+    50→    violet: 'text-violet-400 bg-violet-500/10 ring-violet-500/20',
+    51→    rose: 'text-rose-400 bg-rose-500/10 ring-rose-500/20',
+    52→  }
+    53→  return (
+    54→    <Card className="gap-0 p-4">
+    55→      <div className="flex items-start justify-between">
+    56→        <div className="flex items-center gap-2.5">
+    57→          <div className={cn('rounded-md p-2 ring-1', accentMap[accent])}>
+    58→            <Icon className="h-4 w-4" />
+    59→          </div>
+    60→          <div>
+    61→            <p className="text-sm font-semibold leading-tight">{name}</p>
+    62→            <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
+    63→              <span className={cn('inline-block h-1.5 w-1.5 rounded-full', dot)} /> {statusLabel}
+    64→            </p>
+    65→          </div>
+    66→        </div>
+    67→        {version && <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-muted-foreground">{version}</Badge>}
+    68→      </div>
+    69→      {endpoint && (
+    70→        <div className="mt-3 rounded-md border border-border/50 bg-card/40 p-2">
+    71→          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Endpoint</p>
+    72→          <p className="mt-0.5 truncate font-mono text-[11px] text-foreground/90">{endpoint}</p>
+    73→        </div>
+    74→      )}
+    75→      <div className="mt-3">
+    76→        <Button size="sm" variant="outline" className="h-7 w-full gap-1.5 text-xs" onClick={onConfigure}>
+    77→          <Settings className="h-3 w-3" /> Configure
+    78→        </Button>
+    79→      </div>
+    80→    </Card>
+    81→  )
+    82→}
+    83→
+    84→function ToggleRow({
+    85→  icon: Icon, title, description, defaultOn = false, accent = 'emerald',
+    86→}: {
+    87→  icon: any; title: string; description: string; defaultOn?: boolean; accent?: 'emerald' | 'amber' | 'rose' | 'violet' | 'sky'
+    88→}) {
+    89→  const [on, setOn] = useState(defaultOn)
+    90→  const accentMap: Record<string, string> = {
+    91→    emerald: 'text-emerald-400',
+    92→    amber: 'text-amber-400',
+    93→    rose: 'text-rose-400',
+    94→    violet: 'text-violet-400',
+    95→    sky: 'text-sky-400',
+    96→  }
+    97→  return (
+    98→    <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-card/40 p-3">
+    99→      <div className="flex items-start gap-2.5">
+   100→        <Icon className={cn('mt-0.5 h-4 w-4', accentMap[accent])} />
+   101→        <div>
+   102→          <p className="text-xs font-medium">{title}</p>
+   103→          <p className="text-[10px] text-muted-foreground">{description}</p>
+   104→        </div>
+   105→      </div>
+   106→      <div className="flex items-center gap-2">
+   107→        {on && <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-emerald-400 ring-emerald-500/30">Enabled</Badge>}
+   108→        <Switch checked={on} onCheckedChange={setOn} />
+   109→      </div>
+   110→    </div>
+   111→  )
+   112→}
+   113→
+   114→function ReadOnlyField({ label, value, accent }: { label: string; value: string; accent?: string }) {
+   115→  return (
+   116→    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   117→      <div className="flex items-center justify-between">
+   118→        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+   119→        <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground" onClick={() => toast.info(`Edit "${label}" is demo-only`)}>
+   120→          <Edit className="h-3 w-3" /> Edit
+   121→        </Button>
+   122→      </div>
+   123→      <p className={cn('mt-1 text-sm font-medium', accent)}>{value}</p>
+   124→    </div>
+   125→  )
+   126→}
+   127→
+   128→export function SettingsView() {
+   129→  const [s, setS] = useState<Settings | null>(null)
+   130→  const [loading, setLoading] = useState(true)
+   131→  const [section, setSection] = useState<Section>('general')
+   132→
+   133→  useEffect(() => {
+   134→    fetch('/api/indos/settings')
+   135→      .then(r => r.json())
+   136→      .then((d) => { setS(d); setLoading(false) })
+   137→      .catch(() => { setLoading(false); toast.error('Failed to load settings') })
+   138→  }, [])
+   139→
+   140→  return (
+   141→    <div className="space-y-5 p-4 sm:p-6">
+   142→      <ViewHeader
+   143→        title="System Settings"
+   144→        description="Configuration hub for the entire self-hosted IndOS stack — services, security, observability, AI and backup."
+   145→        icon={<Settings className="h-5 w-5" />}
+   146→        actions={
+   147→          <Badge variant="outline" className="h-8 gap-1.5 px-3 text-xs">
+   148→            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> All services healthy
+   149→          </Badge>
+   150→        }
+   151→      />
+   152→
+   153→      {/* KPIs */}
+   154→      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+   155→        {loading ? (
+   156→          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)
+   157→        ) : (
+   158→          <>
+   159→            <KpiCard label="Stack Services" value="12" icon={Boxes} accent="emerald" hint="all running" />
+   160→            <KpiCard label="Platform Version" value={val(s, 'system', 'platform.version', '1.0.0')} icon={CircuitBoard} accent="sky" hint={val(s, 'system', 'platform.name', 'IndOS')} />
+   161→            <KpiCard label="Auth Provider" value="OIDC" icon={Fingerprint} accent="violet" hint={val(s, 'security', 'auth.provider', 'Keycloak')} />
+   162→            <KpiCard label="Backup Schedule" value="02:00" unit="ICT" icon={DatabaseBackup} accent="amber" hint="daily · last successful" />
+   163→          </>
+   164→        )}
+   165→      </div>
+   166→
+   167→      <div className="grid gap-4 lg:grid-cols-4">
+   168→        {/* Left nav */}
+   169→        <Card className="h-fit p-2 lg:col-span-1">
+   170→          <nav className="space-y-0.5">
+   171→            {NAV.map(item => {
+   172→              const Icon = item.icon
+   173→              const active = section === item.id
+   174→              return (
+   175→                <button
+   176→                  key={item.id}
+   177→                  onClick={() => setSection(item.id)}
+   178→                  className={cn(
+   179→                    'flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-xs font-medium transition-colors',
+   180→                    active
+   181→                      ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
+   182→                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+   183→                  )}
+   184→                >
+   185→                  <Icon className="h-3.5 w-3.5" /> {item.label}
+   186→                </button>
+   187→              )
+   188→            })}
+   189→          </nav>
+   190→          <Separator className="my-2" />
+   191→          <div className="px-3 py-2">
+   192→            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Build</p>
+   193→            <p className="mt-0.5 font-mono text-[11px] text-foreground/80">indos-{val(s, 'system', 'platform.version', '1.0.0')}</p>
+   194→            <p className="mt-0.5 text-[10px] text-muted-foreground">Self-hosted · SQLite · ICT</p>
+   195→          </div>
+   196→        </Card>
+   197→
+   198→        {/* Section content */}
+   199→        <div className="space-y-4 lg:col-span-3">
+   200→          {loading ? (
+   201→            <div className="space-y-3">
+   202→              <Skeleton className="h-8 w-48" />
+   203→              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+   204→            </div>
+   205→          ) : (
+   206→            <>
+   207→              {/* GENERAL */}
+   208→              {section === 'general' && (
+   209→                <Card>
+   210→                  <CardHeader className="pb-3">
+   211→                    <CardTitle className="flex items-center gap-2 text-base">
+   212→                      <Sliders className="h-4 w-4 text-emerald-400" /> General
+   213→                    </CardTitle>
+   214→                    <CardDescription className="text-xs">Platform identity, regional defaults and appearance</CardDescription>
+   215→                  </CardHeader>
+   216→                  <CardContent className="grid gap-3 md:grid-cols-2">
+   217→                    <ReadOnlyField label="Platform Name" value={val(s, 'system', 'platform.name', 'IndOS')} />
+   218→                    <ReadOnlyField label="Version" value={val(s, 'system', 'platform.version', '1.0.0')} />
+   219→                    <ReadOnlyField label="Organization" value={val(s, 'system', 'platform.org', 'Northwind Industrial Group')} />
+   220→                    <ReadOnlyField label="Reverse Proxy" value={val(s, 'system', 'proxy', 'Nginx')} />
+   221→                    <ReadOnlyField label="DNS Resolver" value={val(s, 'system', 'dns', 'Pi-hole')} />
+   222→                    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   223→                      <div className="flex items-center justify-between">
+   224→                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Theme</p>
+   225→                        <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px] text-muted-foreground" onClick={() => toast.info('Theme is locked to dark')}>
+   226→                          <Edit className="h-3 w-3" /> Edit
+   227→                        </Button>
+   228→                      </div>
+   229→                      <Select defaultValue="dark">
+   230→                        <SelectTrigger className="mt-1 h-8 w-full text-xs"><SelectValue /></SelectTrigger>
+   231→                        <SelectContent>
+   232→                          <SelectItem value="dark">Dark (industrial)</SelectItem>
+   233→                          <SelectItem value="midnight">Midnight</SelectItem>
+   234→                          <SelectItem value="slate">Slate</SelectItem>
+   235→                        </SelectContent>
+   236→                      </Select>
+   237→                    </div>
+   238→                    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   239→                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Default Timezone</p>
+   240→                      <p className="mt-1 text-sm font-medium">Asia/Bangkok (ICT, UTC+7)</p>
+   241→                    </div>
+   242→                    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   243→                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Language</p>
+   244→                      <p className="mt-1 text-sm font-medium">English (en-US)</p>
+   245→                    </div>
+   246→                  </CardContent>
+   247→                </Card>
+   248→              )}
+   249→
+   250→              {/* CONNECTIVITY */}
+   251→              {section === 'connectivity' && (
+   252→                <Card>
+   253→                  <CardHeader className="pb-3">
+   254→                    <CardTitle className="flex items-center gap-2 text-base">
+   255→                      <Network className="h-4 w-4 text-sky-400" /> Connectivity
+   256→                    </CardTitle>
+   257→                    <CardDescription className="text-xs">Core services forming the IndOS data plane</CardDescription>
+   258→                  </CardHeader>
+   259→                  <CardContent>
+   260→                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+   261→                      <ServiceCard icon={Radio} name="MQTT Broker" version="Mosquitto 2.0" endpoint={val(s, 'connectivity', 'mqtt.broker', 'mosquitto.indos.local:1883')} accent="sky" onConfigure={() => toast.info('MQTT config is demo-only')} />
+   262→                      <ServiceCard icon={DatabaseBackup} name="Time-Series DB" version={val(s, 'connectivity', 'timeseries.backend', 'InfluxDB 2.7')} endpoint="influxdb.indos.local:8086" accent="violet" onConfigure={() => toast.info('InfluxDB config is demo-only')} />
+   263→                      <ServiceCard icon={HardDrive} name="Cache" version={val(s, 'connectivity', 'cache.backend', 'Redis 7.2')} endpoint="redis.indos.local:6379" accent="rose" onConfigure={() => toast.info('Redis config is demo-only')} />
+   264→                      <ServiceCard icon={Boxes} name="Object Storage" version={val(s, 'connectivity', 'storage.backend', 'MinIO')} endpoint="minio.indos.local:9000" accent="amber" onConfigure={() => toast.info('MinIO config is demo-only')} />
+   265→                      <ServiceCard icon={Globe} name="Reverse Proxy" version={val(s, 'system', 'proxy', 'Nginx')} endpoint=":443 TLS" accent="emerald" onConfigure={() => toast.info('Nginx config is demo-only')} />
+   266→                      <ServiceCard icon={Workflow} name="Node-RED" version="3.1" endpoint="nodered.indos.local:1880" accent="sky" onConfigure={() => toast.info('Node-RED config is demo-only')} />
+   267→                    </div>
+   268→                  </CardContent>
+   269→                </Card>
+   270→              )}
+   271→
+   272→              {/* SECURITY */}
+   273→              {section === 'security' && (
+   274→                <Card>
+   275→                  <CardHeader className="pb-3">
+   276→                    <CardTitle className="flex items-center gap-2 text-base">
+   277→                      <ShieldCheck className="h-4 w-4 text-emerald-400" /> Security
+   278→                    </CardTitle>
+   279→                    <CardDescription className="text-xs">Identity, network and application-layer hardening</CardDescription>
+   280→                  </CardHeader>
+   281→                  <CardContent className="space-y-3">
+   282→                    <div className="grid gap-3 md:grid-cols-2">
+   283→                      <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   284→                        <div className="flex items-center justify-between">
+   285→                          <div className="flex items-center gap-2">
+   286→                            <Fingerprint className="h-4 w-4 text-violet-400" />
+   287→                            <div>
+   288→                              <p className="text-xs font-medium">Identity Provider</p>
+   289→                              <p className="text-[10px] text-muted-foreground">{val(s, 'security', 'auth.provider', 'Keycloak (OIDC)')}</p>
+   290→                            </div>
+   291→                          </div>
+   292→                          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30">Connected</Badge>
+   293→                        </div>
+   294→                        <Button size="sm" variant="outline" className="mt-3 h-7 w-full gap-1.5 text-xs" onClick={() => toast.info('Keycloak admin is demo-only')}>
+   295→                          <ExternalLink className="h-3 w-3" /> Open Keycloak
+   296→                        </Button>
+   297→                      </div>
+   298→                      <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   299→                        <div className="flex items-center justify-between">
+   300→                          <div className="flex items-center gap-2">
+   301→                            <Lock className="h-4 w-4 text-sky-400" />
+   302→                            <div>
+   303→                              <p className="text-xs font-medium">WireGuard VPN</p>
+   304→                              <p className="text-[10px] text-muted-foreground">{val(s, 'security', 'vpn', 'WireGuard')} · 5 peers</p>
+   305→                            </div>
+   306→                          </div>
+   307→                          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30">Up</Badge>
+   308→                        </div>
+   309→                        <Button size="sm" variant="outline" className="mt-3 h-7 w-full gap-1.5 text-xs" onClick={() => toast.info('WireGuard config is demo-only')}>
+   310→                          <Settings className="h-3 w-3" /> Manage Peers
+   311→                        </Button>
+   312→                      </div>
+   313→                    </div>
+   314→                    <div className="grid gap-2 md:grid-cols-2">
+   315→                      <ToggleRow icon={ShieldCheck} title="Two-Factor Auth (2FA)" description={val(s, 'security', 'auth.2fa', 'enabled') + ' · TOTP via authenticator apps'} defaultOn accent="emerald" />
+   316→                      <ToggleRow icon={Globe} title="Pi-hole DNS" description="Network-wide ad & telemetry blocking" defaultOn accent="amber" />
+   317→                      <ToggleRow icon={Gauge} title="Rate Limiting" description="100 req/min per IP on auth endpoints" defaultOn accent="sky" />
+   318→                      <ToggleRow icon={Bug} title="CSRF / XSS Protection" description="Strict CSP, signed cookies, helmet middleware" defaultOn accent="violet" />
+   319→                      <ToggleRow icon={ShieldAlert} title="Modbus Write Guard" description="Block unauthorized Modbus write commands at gateway" defaultOn accent="rose" />
+   320→                      <ToggleRow icon={Lock} title="TLS Everywhere" description="Force HTTPS, mTLS for device brokers" defaultOn accent="emerald" />
+   321→                    </div>
+   322→                  </CardContent>
+   323→                </Card>
+   324→              )}
+   325→
+   326→              {/* OBSERVABILITY */}
+   327→              {section === 'observability' && (
+   328→                <Card>
+   329→                  <CardHeader className="pb-3">
+   330→                    <CardTitle className="flex items-center gap-2 text-base">
+   331→                      <Activity className="h-4 w-4 text-violet-400" /> Observability
+   332→                    </CardTitle>
+   333→                    <CardDescription className="text-xs">Metrics, logs and traces for the IndOS control plane</CardDescription>
+   334→                  </CardHeader>
+   335→                  <CardContent>
+   336→                    <div className="grid gap-3 md:grid-cols-2">
+   337→                      <ServiceCard icon={Gauge} name="Prometheus" version={val(s, 'observability', 'monitoring.metrics', 'Prometheus')} endpoint="prometheus.indos.local:9090" accent="amber" onConfigure={() => toast.info('Prometheus is demo-only')} />
+   338→                      <ServiceCard icon={LineChart} name="Grafana" version="10.4" endpoint="grafana.indos.local:3001" accent="amber" onConfigure={() => toast.info('Grafana is demo-only')} />
+   339→                      <ServiceCard icon={FileBarChart} name="Loki" version={val(s, 'observability', 'monitoring.logs', 'Loki')} endpoint="loki.indos.local:3100" accent="violet" onConfigure={() => toast.info('Loki is demo-only')} />
+   340→                      <ServiceCard icon={Search} name="OpenTelemetry" version={val(s, 'observability', 'monitoring.tracing', 'OpenTelemetry')} endpoint="otel-collector:4317" accent="sky" onConfigure={() => toast.info('OTel is demo-only')} />
+   341→                    </div>
+   342→                  </CardContent>
+   343→                </Card>
+   344→              )}
+   345→
+   346→              {/* AI / ML */}
+   347→              {section === 'ai' && (
+   348→                <Card>
+   349→                  <CardHeader className="pb-3">
+   350→                    <CardTitle className="flex items-center gap-2 text-base">
+   351→                      <Bot className="h-4 w-4 text-violet-400" /> AI / ML
+   352→                    </CardTitle>
+   353→                    <CardDescription className="text-xs">On-prem inference, vector search and computer vision stack</CardDescription>
+   354→                  </CardHeader>
+   355→                  <CardContent>
+   356→                    <div className="grid gap-3 md:grid-cols-2">
+   357→                      <ServiceCard icon={Sparkles} name="Ollama LLM" version={val(s, 'ai', 'ai.backend', 'Ollama (llama3.1:8b)')} endpoint="ollama.indos.local:11434" accent="violet" onConfigure={() => toast.info('Ollama is demo-only')} />
+   358→                      <ServiceCard icon={Boxes} name="Qdrant Vector DB" version={val(s, 'ai', 'ai.vector_db', 'Qdrant 1.8')} endpoint="qdrant.indos.local:6333" accent="sky" onConfigure={() => toast.info('Qdrant is demo-only')} />
+   359→                      <ServiceCard icon={Camera} name="Frigate NVR" version="0.13" endpoint="frigate.indos.local:5000" accent="rose" onConfigure={() => toast.info('Frigate is demo-only')} />
+   360→                      <ServiceCard icon={Cpu} name="YOLO Detector" version="yolov8n" endpoint="cuda:0 · GPU accelerated" accent="amber" onConfigure={() => toast.info('YOLO is demo-only')} />
+   361→                    </div>
+   362→                    <div className="mt-3 flex flex-wrap gap-2">
+   363→                      <Button size="sm" variant="default" className="h-8 gap-1.5" onClick={() => toast.info('Opening Ollama playground (demo)')}>
+   364→                        <ExternalLink className="h-3.5 w-3.5" /> Open Ollama
+   365→                      </Button>
+   366→                      <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => toast.info('Reindexing embeddings (demo)')}>
+   367→                        <Sparkles className="h-3.5 w-3.5" /> Reindex Embeddings
+   368→                      </Button>
+   369→                      <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => toast.info('Loading model (demo)')}>
+   370→                        <Cpu className="h-3.5 w-3.5" /> Pull Model
+   371→                      </Button>
+   372→                    </div>
+   373→                  </CardContent>
+   374→                </Card>
+   375→              )}
+   376→
+   377→              {/* BACKUP */}
+   378→              {section === 'backup' && (
+   379→                <Card>
+   380→                  <CardHeader className="pb-3">
+   381→                    <CardTitle className="flex items-center gap-2 text-base">
+   382→                      <DatabaseBackup className="h-4 w-4 text-amber-400" /> Backup & Recovery
+   383→                    </CardTitle>
+   384→                    <CardDescription className="text-xs">Automated snapshots of the IndOS database, config and object storage</CardDescription>
+   385→                  </CardHeader>
+   386→                  <CardContent className="space-y-3">
+   387→                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+   388→                      <ReadOnlyField label="Schedule" value={val(s, 'system', 'backup.schedule', 'daily 02:00 ICT')} />
+   389→                      <ReadOnlyField label="Retention" value="30 days" />
+   390→                      <ReadOnlyField label="Last Backup" value="Today 02:00 · 412 MB" accent="text-emerald-400" />
+   391→                      <ReadOnlyField label="Destination" value="MinIO bucket: indos-backup" />
+   392→                    </div>
+   393→                    <div className="flex flex-wrap gap-2">
+   394→                      <Button size="sm" className="h-8 gap-1.5" onClick={() => toast.success('Backup started', { description: 'Snapshot queued for immediate execution' })}>
+   395→                        <DatabaseBackup className="h-3.5 w-3.5" /> Run Backup Now
+   396→                      </Button>
+   397→                      <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => toast.info('Restore wizard is demo-only')}>
+   398→                        <RotateCcw className="h-3.5 w-3.5" /> Restore
+   399→                      </Button>
+   400→                    </div>
+   401→                    <Separator />
+   402→                    <div>
+   403→                      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium">
+   404→                        <History className="h-3.5 w-3.5 text-muted-foreground" /> Version History
+   405→                      </p>
+   406→                      <ScrollArea className="indos-scroll max-h-48">
+   407→                        <div className="space-y-1.5">
+   408→                          {[
+   409→                            { ts: 'Today 02:00', size: '412 MB', status: 'success' },
+   410→                            { ts: 'Yesterday 02:00', size: '408 MB', status: 'success' },
+   411→                            { ts: '2 days ago 02:00', size: '405 MB', status: 'success' },
+   412→                            { ts: '3 days ago 02:00', size: '402 MB', status: 'success' },
+   413→                            { ts: '4 days ago 02:00', size: '399 MB', status: 'success' },
+   414→                          ].map(v => (
+   415→                            <div key={v.ts} className="flex items-center justify-between rounded-md border border-border/50 bg-card/40 p-2 text-xs">
+   416→                              <span className="flex items-center gap-2">
+   417→                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> {v.ts}
+   418→                              </span>
+   419→                              <span className="font-mono text-[11px] text-muted-foreground">{v.size}</span>
+   420→                              <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground" onClick={() => toast.info(`Restoring ${v.ts} (demo)`)}>
+   421→                                Restore
+   422→                              </Button>
+   423→                            </div>
+   424→                          ))}
+   425→                        </div>
+   426→                      </ScrollArea>
+   427→                    </div>
+   428→                  </CardContent>
+   429→                </Card>
+   430→              )}
+   431→
+   432→              {/* LICENSE */}
+   433→              {section === 'license' && (
+   434→                <Card>
+   435→                  <CardHeader className="pb-3">
+   436→                    <CardTitle className="flex items-center gap-2 text-base">
+   437→                      <KeySquare className="h-4 w-4 text-emerald-400" /> License
+   438→                    </CardTitle>
+   439→                    <CardDescription className="text-xs">Self-hosted Community Edition — no subscription, no telemetry</CardDescription>
+   440→                  </CardHeader>
+   441→                  <CardContent className="space-y-3">
+   442→                    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-4">
+   443→                      <div className="flex items-center gap-2">
+   444→                        <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+   445→                        <div>
+   446→                          <p className="text-sm font-semibold">IndOS Community Edition</p>
+   447→                          <p className="text-xs text-muted-foreground">Self-hosted · No subscription required</p>
+   448→                        </div>
+   449→                      </div>
+   450→                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+   451→                        <div className="rounded-md border border-border/50 bg-card/40 p-2">
+   452→                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">License Key</p>
+   453→                          <p className="mt-0.5 font-mono text-[11px] text-foreground/90">INDOS-CE-OPEN-SELFHOST-NOLIMIT</p>
+   454→                        </div>
+   455→                        <div className="rounded-md border border-border/50 bg-card/40 p-2">
+   456→                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Seats / Devices</p>
+   457→                          <p className="mt-0.5 text-sm font-medium">Unlimited</p>
+   458→                        </div>
+   459→                      </div>
+   460→                    </div>
+   461→                    <div className="grid gap-2 md:grid-cols-3">
+   462→                      <ReadOnlyField label="Edition" value="Community" />
+   463→                      <ReadOnlyField label="Issued" value="2024-01-01" />
+   464→                      <ReadOnlyField label="Support" value="Community + GitHub Issues" />
+   465→                    </div>
+   466→                    <div className="flex items-center gap-2 rounded-md border border-border/50 bg-card/40 p-3">
+   467→                      <Sparkles className="h-4 w-4 text-violet-400" />
+   468→                      <p className="text-xs text-muted-foreground">
+   469→                        You're running the full open-source stack. <span className="text-foreground">Upgrade not required</span> — all features are unlocked.
+   470→                      </p>
+   471→                    </div>
+   472→                  </CardContent>
+   473→                </Card>
+   474→              )}
+   475→            </>
+   476→          )}
+   477→        </div>
+   478→      </div>
+   479→    </div>
+   480→  )
+   481→}
+   482→

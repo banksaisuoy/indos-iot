@@ -3,8 +3,11 @@ import { useEffect, useMemo, useRef, lazy, Suspense, memo } from 'react'
 import { Sidebar } from '@/components/indos/shell/sidebar'
 import { Topbar } from '@/components/indos/shell/topbar'
 import { CommandPalette } from '@/components/indos/shell/command-palette'
+import { ConnectionBanner } from '@/components/indos/shell/connection-banner'
+import { CriticalAlarmBanner } from '@/components/indos/shell/critical-alarm-banner'
 import { useRealtime } from '@/lib/indos/realtime'
 import { useIndOS } from '@/lib/indos/store'
+import { playCriticalBeep } from '@/lib/indos/alarm-sound'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toast } from 'sonner'
 import type { ViewId } from '@/lib/indos/types'
@@ -92,6 +95,9 @@ export default function Home() {
     lastToastedRef.current = latest.id
     if (latest.severity === 'critical') {
       toast.error(latest.message, { description: `${latest.category} · ${new Date(latest.ts).toLocaleTimeString('en-GB', { hour12: false })}` })
+      // Audible operator-safety beep — only on the TRANSITION (new id), not every render.
+      // localStorage flag (per-browser) gates this; no-op when disabled.
+      playCriticalBeep()
     } else if (latest.severity === 'warning') {
       toast.warning(latest.message, { description: latest.category })
     }
@@ -99,10 +105,12 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
+      <CriticalAlarmBanner />
       <div className="flex flex-1 overflow-hidden">
         <MemoSidebar activeAlarms={activeAlarms} />
         <div className="flex min-w-0 flex-1 flex-col">
           <MemoTopbar />
+          <ConnectionBanner />
           <main className="indos-scroll flex-1 overflow-y-auto">
             <div className="indos-grid-bg min-h-full">
               <Suspense fallback={<ViewLoader />}>

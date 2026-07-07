@@ -1,6 +1,7 @@
 'use client'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { useIndOS } from '@/lib/indos/store'
 import { KpiCard } from '@/components/indos/shared/kpi-card'
 import { ViewHeader } from '@/components/indos/shared/view-header'
 import { StatusBadge } from '@/components/indos/shared/status-badge'
@@ -72,6 +73,7 @@ const DEVICE_TYPE_STYLE: Record<string, string> = {
 }
 
 export function OtaView() {
+  const { prefillDeviceId, prefillDeviceName, setPrefillDevice } = useIndOS()
   const [firmware, setFirmware] = useState<Firmware[] | null>(null)
   const [jobs, setJobs] = useState<OtaJob[] | null>(null)
   const [tab, setTab] = useState<'all' | 'inprogress' | 'completed'>('all')
@@ -80,6 +82,24 @@ export function OtaView() {
   const [target, setTarget] = useState('')
   const [notes, setNotes] = useState('')
   const [opening, setOpening] = useState(false)
+  // Snapshot of prefill on mount — used to (a) seed target/scope and
+  // (b) render a banner reminding the operator which device they
+  // came here to update. Cleared from the store immediately so a
+  // later manual navigation to ota doesn't re-trigger prefill.
+  const [prefill, setPrefill] = useState<{ id: string; name: string | null } | null>(null)
+  const prefillApplied = useRef(false)
+
+  useEffect(() => {
+    if (prefillApplied.current) return
+    prefillApplied.current = true
+    if (prefillDeviceId) {
+      setPrefill({ id: prefillDeviceId, name: prefillDeviceName })
+      setScope('single')
+      setTarget(prefillDeviceId)
+      // Clear the store so a future manual visit doesn't reuse it.
+      setPrefillDevice(null)
+    }
+  }, [prefillDeviceId, prefillDeviceName, setPrefillDevice])
 
   useEffect(() => {
     fetch('/api/indos/firmware').then(r => r.json()).then(setFirmware).catch(() => setFirmware([]))
@@ -118,8 +138,15 @@ export function OtaView() {
 
   function openDeploy(fw: Firmware) {
     setDeployFw(fw)
-    setScope('single')
-    setTarget('')
+    // Preserve prefill from devices-view "Send OTA" hand-off — if a device
+    // was preselected, keep scope=single and target=deviceId.
+    if (prefill) {
+      setScope('single')
+      setTarget(prefill.id)
+    } else {
+      setScope('single')
+      setTarget('')
+    }
     setNotes('')
     setOpening(false)
   }
@@ -189,6 +216,28 @@ export function OtaView() {
           </>
         }
       />
+
+      {/* Prefill banner — shown when the user arrived here via Devices → Send OTA */}
+      {prefill && (
+        <div className="flex flex-col gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 p-3 text-xs sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-sky-300">
+            <Cpu className="h-3.5 w-3.5 shrink-0" />
+            <span>
+              Pre-selected device:{' '}
+              <span className="font-mono font-semibold">{prefill.name || prefill.id}</span>
+              <span className="ml-1 text-sky-300/70">— choose a firmware below to deploy.</span>
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 self-start px-2 text-[11px] text-sky-300 hover:text-sky-200 sm:self-auto"
+            onClick={() => { setPrefill(null); setTarget('') }}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">

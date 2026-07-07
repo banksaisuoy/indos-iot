@@ -1,0 +1,645 @@
+    42→}
+    43→
+    44→interface User {
+    45→  id: string
+    46→  email: string
+    47→  name: string
+    48→  role: string
+    49→  status: string
+    50→  twoFA: boolean
+    51→  lastLogin?: string | null
+    52→  org?: { name: string } | null
+    53→}
+    54→
+    55→const ORG_TYPE_STYLE: Record<string, string> = {
+    56→  operator: 'bg-emerald-500/15 text-emerald-400 ring-emerald-500/30',
+    57→  customer: 'bg-sky-500/15 text-sky-400 ring-sky-500/30',
+    58→  integrator: 'bg-amber-500/15 text-amber-400 ring-amber-500/30',
+    59→}
+    60→
+    61→const ROLE_STYLE: Record<string, string> = {
+    62→  admin: 'bg-rose-500/15 text-rose-400 ring-rose-500/30',
+    63→  engineer: 'bg-violet-500/15 text-violet-400 ring-violet-500/30',
+    64→  operator: 'bg-sky-500/15 text-sky-400 ring-sky-500/30',
+    65→  viewer: 'bg-slate-500/15 text-slate-300 ring-slate-500/30',
+    66→}
+    67→
+    68→const ROLES = ['admin', 'engineer', 'operator', 'viewer'] as const
+    69→const PERMISSIONS = ['View', 'Edit', 'Deploy OTA', 'Manage Users', 'Configure', 'Delete']
+    70→// Realistic role capability matrix
+    71→const MATRIX: Record<string, boolean[]> = {
+    72→  admin:    [true, true, true, true, true, true],
+    73→  engineer: [true, true, true, false, true, false],
+    74→  operator: [true, false, true, false, false, false],
+    75→  viewer:   [true, false, false, false, false, false],
+    76→}
+    77→
+    78→function initials(name: string) {
+    79→  const p = name.trim().split(/\s+/)
+    80→  if (p.length === 1) return p[0].slice(0, 2).toUpperCase()
+    81→  return (p[0][0] + p[p.length - 1][0]).toUpperCase()
+    82→}
+    83→
+    84→function fmtLast(d?: string | null) {
+    85→  if (!d) return 'never'
+    86→  const date = new Date(d)
+    87→  const diff = Date.now() - date.getTime()
+    88→  const days = Math.floor(diff / 86400000)
+    89→  if (days === 0) return 'today'
+    90→  if (days === 1) return 'yesterday'
+    91→  if (days < 30) return `${days}d ago`
+    92→  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+    93→}
+    94→
+    95→function friendlyError(err: unknown, fallback: string): string {
+    96→  let msg = fallback
+    97→  try {
+    98→    const r = err as { message?: string; error?: string }
+    99→    if (r?.message) msg = r.message
+   100→    else if (r?.error) msg = String(r.error).replace(/_/g, ' ').toLowerCase()
+   101→  } catch { /* noop */ }
+   102→  return msg
+   103→}
+   104→
+   105→export function OrganizationsView() {
+   106→  const { data: session } = useSession()
+   107→  const isAdmin = session?.user?.role === 'admin'
+   108→  const currentUserId = session?.user?.id
+   109→
+   110→  const [orgs, setOrgs] = useState<Org[]>([])
+   111→  const [users, setUsers] = useState<User[]>([])
+   112→  const [loading, setLoading] = useState(true)
+   113→  const [roleFilter, setRoleFilter] = useState('all')
+   114→  const [search, setSearch] = useState('')
+   115→
+   116→  // Dialog state — New Org
+   117→  const [newOrgOpen, setNewOrgOpen] = useState(false)
+   118→  const [newOrgForm, setNewOrgForm] = useState({ name: '', type: 'operator' as 'operator' | 'customer' | 'integrator', industry: '', country: '' })
+   119→  const [newOrgBusy, setNewOrgBusy] = useState(false)
+   120→
+   121→  // Dialog state — Invite User
+   122→  const [inviteOpen, setInviteOpen] = useState(false)
+   123→  const [inviteForm, setInviteForm] = useState({ name: '', email: '', password: '', role: 'engineer' as 'admin' | 'engineer' | 'operator' | 'viewer', orgId: '' })
+   124→  const [inviteBusy, setInviteBusy] = useState(false)
+   125→
+   126→  // Dialog state — Reset Password (per-row)
+   127→  const [resetTarget, setResetTarget] = useState<User | null>(null)
+   128→  const [resetPw, setResetPw] = useState('')
+   129→  const [resetBusy, setResetBusy] = useState(false)
+   130→
+   131→  // Dialog state — Change Role (per-row)
+   132→  const [roleTarget, setRoleTarget] = useState<User | null>(null)
+   133→  const [rolePick, setRolePick] = useState<'admin' | 'engineer' | 'operator' | 'viewer'>('viewer')
+   134→  const [roleBusy, setRoleBusy] = useState(false)
+   135→
+   136→  const reload = async () => {
+   137→    try {
+   138→      const [o, u] = await Promise.all([
+   139→        fetch('/api/indos/orgs').then(r => r.json()),
+   140→        fetch('/api/indos/users').then(r => r.json()),
+   141→      ])
+   142→      setOrgs(Array.isArray(o) ? o : [])
+   143→      setUsers(Array.isArray(u) ? u : [])
+   144→    } catch {
+   145→      toast.error('Failed to load organizations')
+   146→    } finally {
+   147→      setLoading(false)
+   148→    }
+   149→  }
+   150→
+   151→  useEffect(() => { void reload() }, [])
+   152→
+   153→  const admins = users.filter(u => u.role === 'admin').length
+   154→  const twoFAOn = users.filter(u => u.twoFA).length
+   155→  const twoFAPct = users.length ? Math.round((twoFAOn / users.length) * 100) : 0
+   156→
+   157→  const filteredUsers = useMemo(() => {
+   158→    const q = search.trim().toLowerCase()
+   159→    return users.filter(u => {
+   160→      if (roleFilter !== 'all' && u.role !== roleFilter) return false
+   161→      if (q && !(`${u.name} ${u.email} ${u.org?.name || ''}`.toLowerCase().includes(q))) return false
+   162→      return true
+   163→    })
+   164→  }, [users, roleFilter, search])
+   165→
+   166→  // ── Action handlers ──────────────────────────────────────────────────
+   167→  async function submitNewOrg() {
+   168→    if (!newOrgForm.name.trim()) { toast.error('Organization name is required'); return }
+   169→    setNewOrgBusy(true)
+   170→    try {
+   171→      const res = await fetch('/api/indos/orgs', {
+   172→        method: 'POST',
+   173→        headers: { 'Content-Type': 'application/json' },
+   174→        body: JSON.stringify({
+   175→          name: newOrgForm.name.trim(),
+   176→          type: newOrgForm.type,
+   177→          industry: newOrgForm.industry.trim() || undefined,
+   178→          country: newOrgForm.country.trim() || undefined,
+   179→        }),
+   180→      })
+   181→      const data = await res.json().catch(() => ({}))
+   182→      if (!res.ok) throw data
+   183→      toast.success(`Organization "${data.name || newOrgForm.name}" created`)
+   184→      setNewOrgOpen(false)
+   185→      setNewOrgForm({ name: '', type: 'operator', industry: '', country: '' })
+   186→      await reload()
+   187→    } catch (e) {
+   188→      toast.error(friendlyError(e, 'Failed to create organization'))
+   189→    } finally {
+   190→      setNewOrgBusy(false)
+   191→    }
+   192→  }
+   193→
+   194→  async function submitInvite() {
+   195→    if (!inviteForm.name.trim()) { toast.error('Full name is required'); return }
+   196→    if (!inviteForm.email.trim()) { toast.error('Email is required'); return }
+   197→    if (inviteForm.password.length < 8) { toast.error('Password must be at least 8 characters'); return }
+   198→    setInviteBusy(true)
+   199→    try {
+   200→      const res = await fetch('/api/indos/users', {
+   201→        method: 'POST',
+   202→        headers: { 'Content-Type': 'application/json' },
+   203→        body: JSON.stringify({
+   204→          name: inviteForm.name.trim(),
+   205→          email: inviteForm.email.trim(),
+   206→          password: inviteForm.password,
+   207→          role: inviteForm.role,
+   208→          orgId: inviteForm.orgId || null,
+   209→        }),
+   210→      })
+   211→      const data = await res.json().catch(() => ({}))
+   212→      if (!res.ok) throw data
+   213→      toast.success(`User "${data.email || inviteForm.email}" created`)
+   214→      setInviteOpen(false)
+   215→      setInviteForm({ name: '', email: '', password: '', role: 'engineer', orgId: '' })
+   216→      await reload()
+   217→    } catch (e) {
+   218→      toast.error(friendlyError(e, 'Failed to create user'))
+   219→    } finally {
+   220→      setInviteBusy(false)
+   221→    }
+   222→  }
+   223→
+   224→  async function toggleUserStatus(u: User) {
+   225→    const next = u.status === 'active' ? 'disabled' : 'active'
+   226→    try {
+   227→      const res = await fetch(`/api/indos/users/${u.id}`, {
+   228→        method: 'PATCH',
+   229→        headers: { 'Content-Type': 'application/json' },
+   230→        body: JSON.stringify({ status: next }),
+   231→      })
+   232→      const data = await res.json().catch(() => ({}))
+   233→      if (!res.ok) throw data
+   234→      toast.success(`${u.email} is now ${next}`)
+   235→      await reload()
+   236→    } catch (e) {
+   237→      toast.error(friendlyError(e, `Failed to ${next === 'disabled' ? 'disable' : 'enable'} user`))
+   238→    }
+   239→  }
+   240→
+   241→  async function submitResetPassword() {
+   242→    if (!resetTarget) return
+   243→    if (resetPw.length < 8) { toast.error('Password must be at least 8 characters'); return }
+   244→    setResetBusy(true)
+   245→    try {
+   246→      const res = await fetch(`/api/indos/users/${resetTarget.id}`, {
+   247→        method: 'PATCH',
+   248→        headers: { 'Content-Type': 'application/json' },
+   249→        body: JSON.stringify({ password: resetPw }),
+   250→      })
+   251→      const data = await res.json().catch(() => ({}))
+   252→      if (!res.ok) throw data
+   253→      toast.success(`Password reset for ${resetTarget.email}`)
+   254→      setResetTarget(null)
+   255→      setResetPw('')
+   256→      await reload()
+   257→    } catch (e) {
+   258→      toast.error(friendlyError(e, 'Failed to reset password'))
+   259→    } finally {
+   260→      setResetBusy(false)
+   261→    }
+   262→  }
+   263→
+   264→  async function submitChangeRole() {
+   265→    if (!roleTarget) return
+   266→    setRoleBusy(true)
+   267→    try {
+   268→      const res = await fetch(`/api/indos/users/${roleTarget.id}`, {
+   269→        method: 'PATCH',
+   270→        headers: { 'Content-Type': 'application/json' },
+   271→        body: JSON.stringify({ role: rolePick }),
+   272→      })
+   273→      const data = await res.json().catch(() => ({}))
+   274→      if (!res.ok) throw data
+   275→      toast.success(`${roleTarget.email} is now ${rolePick}`)
+   276→      setRoleTarget(null)
+   277→      await reload()
+   278→    } catch (e) {
+   279→      toast.error(friendlyError(e, 'Failed to change role'))
+   280→    } finally {
+   281→      setRoleBusy(false)
+   282→    }
+   283→  }
+   284→
+   285→  return (
+   286→    <div className="space-y-5 p-4 sm:p-6">
+   287→      <ViewHeader
+   288→        title="Organizations & Access"
+   289→        description="Manage tenants, members, role-based access and 2FA adoption across the IndOS deployment."
+   290→        icon={<Building2 className="h-5 w-5" />}
+   291→      />
+   292→
+   293→      {/* KPIs */}
+   294→      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+   295→        {loading ? (
+   296→          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)
+   297→        ) : (
+   298→          <>
+   299→            <KpiCard label="Organizations" value={orgs.length} icon={Building2} accent="emerald" hint="tenants on platform" />
+   300→            <KpiCard label="Users" value={users.length} icon={Users} accent="sky" hint={`${users.filter(u => u.status === 'active').length} active`} />
+   301→            <KpiCard label="Administrators" value={admins} icon={KeyRound} accent="rose" hint="full platform access" />
+   302→            <KpiCard label="2FA Adoption" value={twoFAPct} unit="%" icon={ShieldCheck} accent="amber" hint={`${twoFAOn}/${users.length} enrolled`} />
+   303→          </>
+   304→        )}
+   305→      </div>
+   306→
+   307→      <Tabs defaultValue="orgs" className="gap-3">
+   308→        <TabsList className="h-9">
+   309→          <TabsTrigger value="orgs" className="text-xs"><Building2 className="h-3.5 w-3.5" /> Organizations</TabsTrigger>
+   310→          <TabsTrigger value="users" className="text-xs"><Users className="h-3.5 w-3.5" /> Users & Roles</TabsTrigger>
+   311→        </TabsList>
+   312→
+   313→        {/* Organizations tab */}
+   314→        <TabsContent value="orgs" className="space-y-4">
+   315→          <div className="flex justify-end">
+   316→            {isAdmin ? (
+   317→              <Button size="sm" className="h-8 gap-1.5" onClick={() => setNewOrgOpen(true)}>
+   318→                <Plus className="h-3.5 w-3.5" /> New Organization
+   319→              </Button>
+   320→            ) : (
+   321→              <span className="text-xs text-muted-foreground self-center">Contact an admin to provision new tenants.</span>
+   322→            )}
+   323→          </div>
+   324→          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+   325→            {loading
+   326→              ? Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-44 w-full" />)
+   327→              : orgs.map(o => (
+   328→                <Card key={o.id} className="gap-0 p-4">
+   329→                  <div className="flex items-start justify-between">
+   330→                    <div className="flex items-center gap-2.5">
+   331→                      <Avatar className="h-9 w-9 rounded-md">
+   332→                        <AvatarFallback className="rounded-md bg-primary/10 text-xs font-semibold text-primary">
+   333→                          {o.name.slice(0, 2).toUpperCase()}
+   334→                        </AvatarFallback>
+   335→                      </Avatar>
+   336→                      <div>
+   337→                        <p className="text-sm font-semibold leading-tight">{o.name}</p>
+   338→                        <p className="text-[10px] text-muted-foreground">{o.id.slice(-8)}</p>
+   339→                      </div>
+   340→                    </div>
+   341→                    <Badge variant="outline" className={cn('capitalize ring-1', ORG_TYPE_STYLE[o.type] || ORG_TYPE_STYLE.operator)}>
+   342→                      {o.type}
+   343→                    </Badge>
+   344→                  </div>
+   345→
+   346→                  <div className="mt-3 space-y-1.5 text-xs text-muted-foreground">
+   347→                    {o.industry && <p className="flex items-center gap-1.5"><Factory className="h-3 w-3" /> {o.industry}</p>}
+   348→                    {o.country && <p className="flex items-center gap-1.5"><MapPin className="h-3 w-3" /> {o.country}</p>}
+   349→                  </div>
+   350→
+   351→                  <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/50 pt-3">
+   352→                    <Stat label="Users" value={o._count.users} accent="text-sky-400" />
+   353→                    <Stat label="Projects" value={o._count.projects} accent="text-emerald-400" />
+   354→                    <Stat label="Customers" value={o._count.customers} accent="text-amber-400" />
+   355→                  </div>
+   356→                </Card>
+   357→              ))}
+   358→          </div>
+   359→        </TabsContent>
+   360→
+   361→        {/* Users tab */}
+   362→        <TabsContent value="users" className="space-y-4">
+   363→          {/* Roles & Permissions matrix */}
+   364→          <Card>
+   365→            <CardHeader className="pb-3">
+   366→              <CardTitle className="flex items-center gap-2 text-base">
+   367→                <ShieldCheck className="h-4 w-4 text-emerald-400" /> Roles & Permissions
+   368→              </CardTitle>
+   369→              <CardDescription className="text-xs">Capability matrix per role (system-enforced)</CardDescription>
+   370→            </CardHeader>
+   371→            <CardContent>
+   372→              <div className="overflow-x-auto">
+   373→                <Table>
+   374→                  <TableHeader>
+   375→                    <TableRow className="border-border/60">
+   376→                      <TableHead className="text-xs">Role</TableHead>
+   377→                      {PERMISSIONS.map(p => <TableHead key={p} className="text-center text-xs">{p}</TableHead>)}
+   378→                    </TableRow>
+   379→                  </TableHeader>
+   380→                  <TableBody>
+   381→                    {ROLES.map(r => (
+   382→                      <TableRow key={r} className="border-border/40">
+   383→                        <TableCell>
+   384→                          <Badge variant="outline" className={cn('capitalize ring-1', ROLE_STYLE[r])}>{r}</Badge>
+   385→                        </TableCell>
+   386→                        {MATRIX[r].map((ok, i) => (
+   387→                          <TableCell key={i} className="text-center">
+   388→                            {ok
+   389→                              ? <Check className="mx-auto h-4 w-4 text-emerald-400" />
+   390→                              : <Minus className="mx-auto h-4 w-4 text-muted-foreground/40" />}
+   391→                          </TableCell>
+   392→                        ))}
+   393→                      </TableRow>
+   394→                    ))}
+   395→                  </TableBody>
+   396→                </Table>
+   397→              </div>
+   398→            </CardContent>
+   399→          </Card>
+   400→
+   401→          {/* Users table */}
+   402→          <Card>
+   403→            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-3 space-y-0">
+   404→              <div>
+   405→                <CardTitle className="flex items-center gap-2 text-base">
+   406→                  <Users className="h-4 w-4 text-sky-400" /> Platform Users
+   407→                </CardTitle>
+   408→                <CardDescription className="text-xs">{filteredUsers.length} of {users.length} shown</CardDescription>
+   409→              </div>
+   410→              <div className="flex flex-wrap items-center gap-2">
+   411→                <div className="relative">
+   412→                  <Input placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} className="h-8 w-44 pl-7 text-xs" />
+   413→                </div>
+   414→                <Select value={roleFilter} onValueChange={setRoleFilter}>
+   415→                  <SelectTrigger className="h-8 w-36 text-xs"><SelectValue placeholder="Role" /></SelectTrigger>
+   416→                  <SelectContent>
+   417→                    <SelectItem value="all">All roles</SelectItem>
+   418→                    {ROLES.map(r => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}
+   419→                  </SelectContent>
+   420→                </Select>
+   421→                {isAdmin && (
+   422→                  <Button size="sm" className="h-8 gap-1.5" onClick={() => setInviteOpen(true)}>
+   423→                    <UserPlus className="h-3.5 w-3.5" /> Invite
+   424→                  </Button>
+   425→                )}
+   426→              </div>
+   427→            </CardHeader>
+   428→            <CardContent>
+   429→              <ScrollArea className="indos-scroll max-h-[480px]">
+   430→                <Table>
+   431→                  <TableHeader>
+   432→                    <TableRow className="border-border/60">
+   433→                      <TableHead className="text-xs">User</TableHead>
+   434→                      <TableHead className="text-xs">Role</TableHead>
+   435→                      <TableHead className="hidden text-xs md:table-cell">Organization</TableHead>
+   436→                      <TableHead className="hidden text-xs sm:table-cell">2FA</TableHead>
+   437→                      <TableHead className="hidden text-xs lg:table-cell">Last login</TableHead>
+   438→                      <TableHead className="text-xs">Status</TableHead>
+   439→                      <TableHead className="w-10 text-xs">{isAdmin ? <span className="sr-only">Actions</span> : null}</TableHead>
+   440→                    </TableRow>
+   441→                  </TableHeader>
+   442→                  <TableBody>
+   443→                    {loading
+   444→                      ? Array.from({ length: 6 }).map((_, i) => (
+   445→                        <TableRow key={i} className="border-border/40">
+   446→                          <TableCell colSpan={7}><Skeleton className="h-6 w-full" /></TableCell>
+   447→                        </TableRow>
+   448→                      ))
+   449→                      : filteredUsers.map(u => {
+   450→                        const isSelf = !!currentUserId && u.id === currentUserId
+   451→                        return (
+   452→                          <TableRow key={u.id} className="border-border/40">
+   453→                            <TableCell>
+   454→                              <div className="flex items-center gap-2">
+   455→                                <Avatar className="h-7 w-7">
+   456→                                  <AvatarFallback className="bg-primary/10 text-[10px] font-semibold text-primary">{initials(u.name)}</AvatarFallback>
+   457→                                </Avatar>
+   458→                                <div>
+   459→                                  <p className="text-xs font-medium leading-tight">{u.name}{isSelf && <span className="ml-1 text-[10px] text-muted-foreground">(you)</span>}</p>
+   460→                                  <p className="text-[10px] text-muted-foreground">{u.email}</p>
+   461→                                </div>
+   462→                              </div>
+   463→                            </TableCell>
+   464→                            <TableCell>
+   465→                              <Badge variant="outline" className={cn('capitalize ring-1', ROLE_STYLE[u.role] || ROLE_STYLE.viewer)}>{u.role}</Badge>
+   466→                            </TableCell>
+   467→                            <TableCell className="hidden text-xs md:table-cell">{u.org?.name || '—'}</TableCell>
+   468→                            <TableCell className="hidden sm:table-cell">
+   469→                              {u.twoFA
+   470→                                ? <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30"><ShieldCheck className="h-3 w-3" /> On</Badge>
+   471→                                : <Badge variant="outline" className="bg-slate-500/10 text-slate-400 ring-slate-500/30">Off</Badge>}
+   472→                            </TableCell>
+   473→                            <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">{fmtLast(u.lastLogin)}</TableCell>
+   474→                            <TableCell>
+   475→                              {u.status === 'active'
+   476→                                ? <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30">Active</Badge>
+   477→                                : <Badge variant="outline" className="bg-slate-500/10 text-slate-400 ring-slate-500/30">Disabled</Badge>}
+   478→                            </TableCell>
+   479→                            <TableCell>
+   480→                              {isAdmin && !isSelf && (
+   481→                                <DropdownMenu>
+   482→                                  <DropdownMenuTrigger asChild>
+   483→                                    <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Actions for ${u.email}`}>
+   484→                                      <MoreVertical className="h-4 w-4" />
+   485→                                    </Button>
+   486→                                  </DropdownMenuTrigger>
+   487→                                  <DropdownMenuContent align="end" className="w-48">
+   488→                                    <DropdownMenuLabel className="text-xs">{u.email}</DropdownMenuLabel>
+   489→                                    <DropdownMenuSeparator />
+   490→                                    <DropdownMenuItem
+   491→                                      className="text-xs"
+   492→                                      onSelect={(e) => { e.preventDefault(); void toggleUserStatus(u) }}
+   493→                                    >
+   494→                                      <Power className="h-3.5 w-3.5" />
+   495→                                      {u.status === 'active' ? 'Disable' : 'Enable'}
+   496→                                    </DropdownMenuItem>
+   497→                                    <DropdownMenuItem
+   498→                                      className="text-xs"
+   499→                                      onSelect={(e) => { e.preventDefault(); setResetPw(''); setResetTarget(u) }}
+   500→                                    >
+   501→                                      <KeySquare className="h-3.5 w-3.5" /> Reset password…
+   502→                                    </DropdownMenuItem>
+   503→                                    <DropdownMenuItem
+   504→                                      className="text-xs"
+   505→                                      onSelect={(e) => { e.preventDefault(); setRolePick(u.role as typeof rolePick); setRoleTarget(u) }}
+   506→                                    >
+   507→                                      <PencilLine className="h-3.5 w-3.5" /> Change role…
+   508→                                    </DropdownMenuItem>
+   509→                                  </DropdownMenuContent>
+   510→                                </DropdownMenu>
+   511→                              )}
+   512→                            </TableCell>
+   513→                          </TableRow>
+   514→                        )
+   515→                      })}
+   516→                  </TableBody>
+   517→                </Table>
+   518→              </ScrollArea>
+   519→            </CardContent>
+   520→          </Card>
+   521→        </TabsContent>
+   522→      </Tabs>
+   523→
+   524→      {/* ───────── New Org dialog ───────── */}
+   525→      <Dialog open={newOrgOpen} onOpenChange={(o) => { setNewOrgOpen(o); if (!o) setNewOrgForm({ name: '', type: 'operator', industry: '', country: '' }) }}>
+   526→        <DialogContent className="sm:max-w-md">
+   527→          <DialogHeader>
+   528→            <DialogTitle>New Organization</DialogTitle>
+   529→            <DialogDescription>Provision a new tenant on the IndOS platform.</DialogDescription>
+   530→          </DialogHeader>
+   531→          <div className="grid gap-3">
+   532→            <div className="grid gap-1.5">
+   533→              <Label htmlFor="org-name">Organization name</Label>
+   534→              <Input id="org-name" placeholder="e.g. Acme Industrial Co., Ltd." value={newOrgForm.name} onChange={(e) => setNewOrgForm({ ...newOrgForm, name: e.target.value })} />
+   535→            </div>
+   536→            <div className="grid grid-cols-2 gap-3">
+   537→              <div className="grid gap-1.5">
+   538→                <Label>Type</Label>
+   539→                <Select value={newOrgForm.type} onValueChange={(v) => setNewOrgForm({ ...newOrgForm, type: v as typeof newOrgForm.type })}>
+   540→                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+   541→                  <SelectContent>
+   542→                    <SelectItem value="operator">Operator</SelectItem>
+   543→                    <SelectItem value="customer">Customer</SelectItem>
+   544→                    <SelectItem value="integrator">Integrator</SelectItem>
+   545→                  </SelectContent>
+   546→                </Select>
+   547→              </div>
+   548→              <div className="grid gap-1.5">
+   549→                <Label htmlFor="org-industry">Industry</Label>
+   550→                <Input id="org-industry" placeholder="Manufacturing" value={newOrgForm.industry} onChange={(e) => setNewOrgForm({ ...newOrgForm, industry: e.target.value })} />
+   551→              </div>
+   552→            </div>
+   553→            <div className="grid gap-1.5">
+   554→              <Label htmlFor="org-country">Country</Label>
+   555→              <Input id="org-country" placeholder="Thailand" value={newOrgForm.country} onChange={(e) => setNewOrgForm({ ...newOrgForm, country: e.target.value })} />
+   556→            </div>
+   557→          </div>
+   558→          <DialogFooter>
+   559→            <Button variant="outline" size="sm" onClick={() => setNewOrgOpen(false)} disabled={newOrgBusy}>Cancel</Button>
+   560→            <Button size="sm" onClick={submitNewOrg} disabled={newOrgBusy}>
+   561→              {newOrgBusy ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Creating…</> : 'Create'}
+   562→            </Button>
+   563→          </DialogFooter>
+   564→        </DialogContent>
+   565→      </Dialog>
+   566→
+   567→      {/* ───────── Invite User dialog ───────── */}
+   568→      <Dialog open={inviteOpen} onOpenChange={(o) => { setInviteOpen(o); if (!o) setInviteForm({ name: '', email: '', password: '', role: 'engineer', orgId: '' }) }}>
+   569→        <DialogContent className="sm:max-w-md">
+   570→          <DialogHeader>
+   571→            <DialogTitle>Invite User</DialogTitle>
+   572→            <DialogDescription>Create a new account with role pre-assigned. The user can log in immediately with the initial password.</DialogDescription>
+   573→          </DialogHeader>
+   574→          <div className="grid gap-3">
+   575→            <div className="grid gap-1.5">
+   576→              <Label htmlFor="inv-email">Email</Label>
+   577→              <Input id="inv-email" type="email" placeholder="engineer@acme.io" value={inviteForm.email} onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })} />
+   578→            </div>
+   579→            <div className="grid gap-1.5">
+   580→              <Label htmlFor="inv-name">Full name</Label>
+   581→              <Input id="inv-name" placeholder="Somchai Prasert" value={inviteForm.name} onChange={(e) => setInviteForm({ ...inviteForm, name: e.target.value })} />
+   582→            </div>
+   583→            <div className="grid gap-1.5">
+   584→              <Label htmlFor="inv-pw">Initial password</Label>
+   585→              <Input id="inv-pw" type="password" placeholder="min. 8 characters" value={inviteForm.password} onChange={(e) => setInviteForm({ ...inviteForm, password: e.target.value })} />
+   586→              <p className="text-[10px] text-muted-foreground">User can change after first login.</p>
+   587→            </div>
+   588→            <div className="grid grid-cols-2 gap-3">
+   589→              <div className="grid gap-1.5">
+   590→                <Label>Role</Label>
+   591→                <Select value={inviteForm.role} onValueChange={(v) => setInviteForm({ ...inviteForm, role: v as typeof inviteForm.role })}>
+   592→                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+   593→                  <SelectContent>
+   594→                    {ROLES.map(r => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}
+   595→                  </SelectContent>
+   596→                </Select>
+   597→              </div>
+   598→              <div className="grid gap-1.5">
+   599→                <Label>Organization</Label>
+   600→                <Select value={inviteForm.orgId || '__none__'} onValueChange={(v) => setInviteForm({ ...inviteForm, orgId: v === '__none__' ? '' : v })}>
+   601→                  <SelectTrigger className="w-full"><SelectValue placeholder="Select…" /></SelectTrigger>
+   602→                  <SelectContent>
+   603→                    <SelectItem value="__none__">— No org (platform-level) —</SelectItem>
+   604→                    {orgs.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+   605→                  </SelectContent>
+   606→                </Select>
+   607→              </div>
+   608→            </div>
+   609→          </div>
+   610→          <DialogFooter>
+   611→            <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)} disabled={inviteBusy}>Cancel</Button>
+   612→            <Button size="sm" onClick={submitInvite} disabled={inviteBusy}>
+   613→              {inviteBusy
+   614→                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Creating…</>
+   615→                : <><UserPlus className="h-3.5 w-3.5" /> Send Invite</>}
+   616→            </Button>
+   617→          </DialogFooter>
+   618→        </DialogContent>
+   619→      </Dialog>
+   620→
+   621→      {/* ───────── Reset Password dialog ───────── */}
+   622→      <Dialog open={!!resetTarget} onOpenChange={(o) => { if (!o) { setResetTarget(null); setResetPw('') } }}>
+   623→        <DialogContent className="sm:max-w-md">
+   624→          <DialogHeader>
+   625→            <DialogTitle>Reset password</DialogTitle>
+   626→            <DialogDescription>
+   627→              {resetTarget ? `Set a new password for ${resetTarget.email}. They will need to use it on next sign-in.` : ''}
+   628→            </DialogDescription>
+   629→          </DialogHeader>
+   630→          <div className="grid gap-1.5">
+   631→            <Label htmlFor="reset-pw">New password</Label>
+   632→            <Input id="reset-pw" type="password" placeholder="min. 8 characters" value={resetPw} onChange={(e) => setResetPw(e.target.value)} />
+   633→            <p className="text-[10px] text-muted-foreground">Password is hashed with bcrypt before storage.</p>
+   634→          </div>
+   635→          <DialogFooter>
+   636→            <Button variant="outline" size="sm" onClick={() => { setResetTarget(null); setResetPw('') }} disabled={resetBusy}>Cancel</Button>
+   637→            <Button size="sm" onClick={submitResetPassword} disabled={resetBusy}>
+   638→              {resetBusy
+   639→                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</>
+   640→                : <><KeySquare className="h-3.5 w-3.5" /> Reset password</>}
+   641→            </Button>
+   642→          </DialogFooter>
+   643→        </DialogContent>
+   644→      </Dialog>
+   645→
+   646→      {/* ───────── Change Role dialog ───────── */}
+   647→      <Dialog open={!!roleTarget} onOpenChange={(o) => { if (!o) setRoleTarget(null) }}>
+   648→        <DialogContent className="sm:max-w-md">
+   649→          <DialogHeader>
+   650→            <DialogTitle>Change role</DialogTitle>
+   651→            <DialogDescription>
+   652→              {roleTarget ? `Select a new role for ${roleTarget.email}.` : ''}
+   653→            </DialogDescription>
+   654→          </DialogHeader>
+   655→          <div className="grid gap-1.5">
+   656→            <Label>New role</Label>
+   657→            <Select value={rolePick} onValueChange={(v) => setRolePick(v as typeof rolePick)}>
+   658→              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+   659→              <SelectContent>
+   660→                {ROLES.map(r => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}
+   661→              </SelectContent>
+   662→            </Select>
+   663→          </div>
+   664→          <DialogFooter>
+   665→            <Button variant="outline" size="sm" onClick={() => setRoleTarget(null)} disabled={roleBusy}>Cancel</Button>
+   666→            <Button size="sm" onClick={submitChangeRole} disabled={roleBusy}>
+   667→              {roleBusy
+   668→                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</>
+   669→                : 'Apply'}
+   670→            </Button>
+   671→          </DialogFooter>
+   672→        </DialogContent>
+   673→      </Dialog>
+   674→    </div>
+   675→  )
+   676→}
+   677→
+   678→function Stat({ label, value, accent }: { label: string; value: number; accent: string }) {
+   679→  return (
+   680→    <div className="rounded-md border border-border/40 bg-card/40 p-2 text-center">
+   681→      <p className={cn('text-lg font-semibold tabular-nums', accent)}>{value}</p>
+   682→      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+   683→    </div>
+   684→  )
+   685→}
+   686→

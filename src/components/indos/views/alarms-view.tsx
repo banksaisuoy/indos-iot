@@ -20,8 +20,10 @@ import { toast } from 'sonner'
 import {
   Bell, AlertTriangle, CheckCircle2, ShieldCheck, Filter, RefreshCw,
   Clock, Zap, Activity, Cpu, Leaf, Wrench, Server, Check, ArrowRight,
+  Download, Loader2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { toCSV, downloadCSV, csvTimestamp } from '@/lib/csv'
 
 interface DbAlarm {
   id: string
@@ -49,6 +51,20 @@ interface NormAlarm {
   isLive: boolean
   ackedBy?: string | null
 }
+
+/** CSV column descriptor used by Export CSV. Keep ordering stable so shift-handover
+ *  reports are diffable. ISO timestamp column is for machine consumers, Local for humans. */
+const CSV_COLUMNS: { key: string; label: string }[] = [
+  { key: 'severity', label: 'Severity' },
+  { key: 'category', label: 'Category' },
+  { key: 'message', label: 'Message' },
+  { key: 'device', label: 'Device' },
+  { key: 'project', label: 'Project' },
+  { key: 'state', label: 'State' },
+  { key: 'ackedBy', label: 'Acked By' },
+  { key: 'ts', label: 'Timestamp(ISO)' },
+  { key: 'tsLocal', label: 'Timestamp(Local)' },
+]
 
 const STATES = ['active', 'acknowledged', 'resolved']
 const SEVERITIES = ['critical', 'warning', 'info']
@@ -97,6 +113,8 @@ export function AlarmsView() {
   const [sevF, setSevF] = useState<string>('all')
   const [catF, setCatF] = useState<string>('all')
   const [actioning, setActioning] = useState<Record<string, boolean>>({})
+  const [bulkActioning, setBulkActioning] = useState<'critical' | 'all' | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   const load = useCallback(() => {
     let cancelled = false
@@ -214,6 +232,104 @@ export function AlarmsView() {
     }
   }
 
+  /**
+   * Bulk acknowledge — calls POST /api/indos/alarms/bulk-ack with either
+   * `{ severity: 'critical', all: true }` or `{ all: true }`, then mirrors the
+   * state change into the live (socket.io) alarm list so the UI updates
+   * instantly without waiting for the next reload. Engineer+ only — the API
+   * enforces this and returns 403 for operator/viewer; we surface that.
+   */
+  const bulkAck = async (mode: 'critical' | 'all') => {
+    setBulkActioning(mode)
+    try {
+      const payload = mode === 'critical'
+        ? { severity: 'critical' as const, all: true }
+        : { all: true }
+      const res = await fetch('/api/indos/alarms/bulk-ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (res.status === 403) {
+        toast.error('Insufficient permissions', { description: 'Engineer+ role required for bulk acknowledge.' })
+        return
+      }
+      if (res.status === 401) {
+        toast.error('Session expired', { description: 'Please sign in again.' })
+        return
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body?.message || `HTTP ${res.status}`)
+      }
+      const data = (await res.json()) as { count: number }
+
+      // Mirror the ack into the live alarm list so the badge / feed updates
+      // immediately. Server-side updateMany already moved DB rows; we just
+      // need to update the in-memory live buffer for snappy UX.
+      const liveActives = rt.recentAlarms.filter(a => a.state === 'active')
+      const targets = mode === 'critical'
+        ? liveActives.filter(a => a.severity === 'critical')
+        : liveActives
+      for (const a of targets) rt.ackAlarm(a.id)
+
+      const label = mode === 'critical' ? 'critical alarms' : 'active alarms'
+      if (data.count > 0) {
+        toast.success(`Acknowledged ${data.count} ${label}`, {
+          description: 'Alarms moved to acknowledged state. Reload to see updated DB rows.',
+        })
+      } else {
+        toast.info(`No active ${label} to acknowledge`, {
+          description: 'Everything in scope was already acknowledged or resolved.',
+        })
+      }
+      load()
+    } catch (e: any) {
+      toast.error('Bulk acknowledge failed', { description: e?.message || 'Please try again.' })
+    } finally {
+      setBulkActioning(null)
+    }
+  }
+
+  /**
+   * Export the CURRENT filtered alarm list to CSV. Includes all rows in the
+   * filtered view (no pagination), with a stable column order. Filename is
+   * `indos-alarms-YYYY-MM-DD-HHmm.csv` (local time) per shift-handover convention.
+   */
+  const exportCSV = () => {
+    if (filtered.length === 0) {
+      toast.info('Nothing to export', { description: 'No alarms match the current filters.' })
+      return
+    }
+    setExporting(true)
+    try {
+      // Project each NormAlarm into a CSV row. `tsLocal` is rendered via fmtTime
+      // so the operator sees the same timestamp format they're used to.
+      const rows = filtered.map(a => ({
+        severity: a.severity,
+        category: a.category,
+        message: a.message,
+        device: a.device || '',
+        project: a.project || '',
+        state: a.state,
+        ackedBy: a.ackedBy || '',
+        ts: a.ts,
+        tsLocal: fmtTime(a.ts),
+      }))
+      const filename = `indos-alarms-${csvTimestamp()}.csv`
+      // Build the CSV string explicitly so we can show the byte size in the toast.
+      const csv = toCSV(rows, CSV_COLUMNS)
+      downloadCSV(filename, rows, CSV_COLUMNS)
+      toast.success(`Exported ${rows.length} alarms to CSV`, {
+        description: `${filename} · ${(csv.length / 1024).toFixed(1)} KB`,
+      })
+    } catch (e: any) {
+      toast.error('CSV export failed', { description: e?.message || 'Please try again.' })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="space-y-5 p-4 sm:p-6">
       <ViewHeader
@@ -225,6 +341,52 @@ export function AlarmsView() {
             <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
               <LiveDot color="bg-emerald-400" /> {rt.recentAlarms.filter(a => a.state === 'active').length} live
             </Badge>
+            {/* Ack All Critical — only show when there ARE active critical alarms in the
+                current filtered view, to avoid offering a no-op destructive action. */}
+            {filtered.some(a => a.state === 'active' && a.severity === 'critical') && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 border-rose-500/40 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 hover:text-rose-300"
+                disabled={bulkActioning !== null || exporting}
+                onClick={() => bulkAck('critical')}
+              >
+                {bulkActioning === 'critical'
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <AlertTriangle className="h-3.5 w-3.5" />}
+                Ack All Critical
+              </Button>
+            )}
+            {/* Ack All Active — only show when there is at least one active alarm in
+                the current filtered view. */}
+            {filtered.some(a => a.state === 'active') && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5"
+                disabled={bulkActioning !== null || exporting}
+                onClick={() => bulkAck('all')}
+              >
+                {bulkActioning === 'all'
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <CheckCircle2 className="h-3.5 w-3.5" />}
+                Ack All Active
+              </Button>
+            )}
+            {/* Export CSV — ghost/outline, Download icon. Exports the CURRENT filtered
+                list (whatever the operator sees in the table). */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              disabled={bulkActioning !== null || exporting || filtered.length === 0}
+              onClick={exportCSV}
+            >
+              {exporting
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Download className="h-3.5 w-3.5" />}
+              Export CSV
+            </Button>
             <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => { load(); toast.success('Alarm feed refreshed') }}>
               <RefreshCw className="h-3.5 w-3.5" /> Refresh
             </Button>

@@ -1,0 +1,571 @@
+     1→'use client'
+     2→import { useEffect, useState } from 'react'
+     3→import { toast } from 'sonner'
+     4→import { KpiCard } from '@/components/indos/shared/kpi-card'
+     5→import { ViewHeader } from '@/components/indos/shared/view-header'
+     6→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+     7→import { Badge } from '@/components/ui/badge'
+     8→import { Button } from '@/components/ui/button'
+     9→import { Switch } from '@/components/ui/switch'
+    10→import { Skeleton } from '@/components/ui/skeleton'
+    11→import { Separator } from '@/components/ui/separator'
+    12→import { ScrollArea } from '@/components/ui/scroll-area'
+    13→import {
+    14→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    15→} from '@/components/ui/select'
+    16→import { cn } from '@/lib/utils'
+    17→import {
+    18→  Settings, Sliders, Network, ShieldCheck, Activity, Bot, DatabaseBackup, KeySquare, Edit, ExternalLink, Cpu, Server, Boxes, Radio, HardDrive, Workflow, Lock, Fingerprint, Bug, Globe, FileBarChart, LineChart, Search, Camera, Sparkles, History, RotateCcw, CheckCircle2, CircuitBoard, Wifi, ShieldAlert, Gauge, BellRing, Volume2,
+    19→} from 'lucide-react'
+    20→import { isAlarmSoundEnabled, setAlarmSoundEnabled, playCriticalBeep } from '@/lib/indos/alarm-sound'
+    21→
+    22→type Settings = Record<string, Record<string, string>>
+    23→
+    24→type Section = 'general' | 'connectivity' | 'security' | 'observability' | 'ai' | 'backup' | 'license' | 'alerts'
+    25→
+    26→const NAV: { id: Section; label: string; icon: any }[] = [
+    27→  { id: 'general', label: 'General', icon: Sliders },
+    28→  { id: 'connectivity', label: 'Connectivity', icon: Network },
+    29→  { id: 'security', label: 'Security', icon: ShieldCheck },
+    30→  { id: 'observability', label: 'Observability', icon: Activity },
+    31→  { id: 'alerts', label: 'Alerts', icon: BellRing },
+    32→  { id: 'ai', label: 'AI / ML', icon: Bot },
+    33→  { id: 'backup', label: 'Backup', icon: DatabaseBackup },
+    34→  { id: 'license', label: 'License', icon: KeySquare },
+    35→]
+    36→
+    37→function val(s: Settings | null, cat: string, key: string, fallback = '—') {
+    38→  return s?.[cat]?.[key] || fallback
+    39→}
+    40→
+    41→function ServiceCard({
+    42→  icon: Icon, name, status = 'healthy', endpoint, version, onConfigure, accent = 'emerald',
+    43→}: {
+    44→  icon: any; name: string; status?: 'healthy' | 'degraded' | 'down'; endpoint?: string; version?: string; onConfigure?: () => void; accent?: 'emerald' | 'sky' | 'amber' | 'violet' | 'rose'
+    45→}) {
+    46→  const dot = status === 'healthy' ? 'bg-emerald-400' : status === 'degraded' ? 'bg-amber-400' : 'bg-rose-400'
+    47→  const statusLabel = status === 'healthy' ? 'Healthy' : status === 'degraded' ? 'Degraded' : 'Down'
+    48→  const accentMap: Record<string, string> = {
+    49→    emerald: 'text-emerald-400 bg-emerald-500/10 ring-emerald-500/20',
+    50→    sky: 'text-sky-400 bg-sky-500/10 ring-sky-500/20',
+    51→    amber: 'text-amber-400 bg-amber-500/10 ring-amber-500/20',
+    52→    violet: 'text-violet-400 bg-violet-500/10 ring-violet-500/20',
+    53→    rose: 'text-rose-400 bg-rose-500/10 ring-rose-500/20',
+    54→  }
+    55→  return (
+    56→    <Card className="gap-0 p-4">
+    57→      <div className="flex items-start justify-between">
+    58→        <div className="flex items-center gap-2.5">
+    59→          <div className={cn('rounded-md p-2 ring-1', accentMap[accent])}>
+    60→            <Icon className="h-4 w-4" />
+    61→          </div>
+    62→          <div>
+    63→            <p className="text-sm font-semibold leading-tight">{name}</p>
+    64→            <p className="flex items-center gap-1 text-[10px] text-muted-foreground">
+    65→              <span className={cn('inline-block h-1.5 w-1.5 rounded-full', dot)} /> {statusLabel}
+    66→            </p>
+    67→          </div>
+    68→        </div>
+    69→        {version && <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-muted-foreground">{version}</Badge>}
+    70→      </div>
+    71→      {endpoint && (
+    72→        <div className="mt-3 rounded-md border border-border/50 bg-card/40 p-2">
+    73→          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Endpoint</p>
+    74→          <p className="mt-0.5 truncate font-mono text-[11px] text-foreground/90">{endpoint}</p>
+    75→        </div>
+    76→      )}
+    77→      <div className="mt-3">
+    78→        <Button size="sm" variant="outline" className="h-7 w-full gap-1.5 text-xs" onClick={onConfigure}>
+    79→          <Settings className="h-3 w-3" /> Configure
+    80→        </Button>
+    81→      </div>
+    82→    </Card>
+    83→  )
+    84→}
+    85→
+    86→function ToggleRow({
+    87→  icon: Icon, title, description, defaultOn = false, accent = 'emerald',
+    88→}: {
+    89→  icon: any; title: string; description: string; defaultOn?: boolean; accent?: 'emerald' | 'amber' | 'rose' | 'violet' | 'sky'
+    90→}) {
+    91→  const [on, setOn] = useState(defaultOn)
+    92→  const accentMap: Record<string, string> = {
+    93→    emerald: 'text-emerald-400',
+    94→    amber: 'text-amber-400',
+    95→    rose: 'text-rose-400',
+    96→    violet: 'text-violet-400',
+    97→    sky: 'text-sky-400',
+    98→  }
+    99→  return (
+   100→    <div className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-card/40 p-3">
+   101→      <div className="flex items-start gap-2.5">
+   102→        <Icon className={cn('mt-0.5 h-4 w-4', accentMap[accent])} />
+   103→        <div>
+   104→          <p className="text-xs font-medium">{title}</p>
+   105→          <p className="text-[10px] text-muted-foreground">{description}</p>
+   106→        </div>
+   107→      </div>
+   108→      <div className="flex items-center gap-2">
+   109→        {on && <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-emerald-400 ring-emerald-500/30">Enabled</Badge>}
+   110→        <Switch checked={on} onCheckedChange={setOn} />
+   111→      </div>
+   112→    </div>
+   113→  )
+   114→}
+   115→
+   116→function ReadOnlyField({ label, value, accent }: { label: string; value: string; accent?: string }) {
+   117→  return (
+   118→    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   119→      <div className="flex items-center justify-between">
+   120→        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</p>
+   121→        <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground" onClick={() => toast.info(`Edit "${label}" is demo-only`)}>
+   122→          <Edit className="h-3 w-3" /> Edit
+   123→        </Button>
+   124→      </div>
+   125→      <p className={cn('mt-1 text-sm font-medium', accent)}>{value}</p>
+   126→    </div>
+   127→  )
+   128→}
+   129→
+   130→/**
+   131→ * Operator-preference card for the critical-alarm audible beep. The setting
+   132→ * is stored per-browser in localStorage (no API, no sync) so each operator /
+   133→ * kiosk can choose independently.
+   134→ */
+   135→function AlarmSoundCard() {
+   136→  const [enabled, setEnabled] = useState<boolean>(true)
+   137→
+   138→  // Hydrate from localStorage after mount (SSR-safe).
+   139→  useEffect(() => {
+   140→    setEnabled(isAlarmSoundEnabled())
+   141→  }, [])
+   142→
+   143→  const handleToggle = (next: boolean) => {
+   144→    setEnabled(next)
+   145→    setAlarmSoundEnabled(next)
+   146→    if (next) {
+   147→      toast.success('Critical alarm sound enabled', {
+   148→        description: 'An audible 3-beep pattern will play when a critical alarm fires.',
+   149→      })
+   150→      // Preview the beep immediately so the operator can confirm their speakers work.
+   151→      // Note: this runs inside the click handler — satisfies the autoplay gesture.
+   152→      playCriticalBeep()
+   153→    } else {
+   154→      toast.info('Critical alarm sound muted', {
+   155→        description: 'Visual banners and toasts remain. Recommended only for mobile browsing.',
+   156→      })
+   157→    }
+   158→  }
+   159→
+   160→  const handleTest = () => {
+   161→    playCriticalBeep()
+   162→    toast.info('Test beep played', { description: 'If you did not hear it, check browser audio output.' })
+   163→  }
+   164→
+   165→  return (
+   166→    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   167→      <div className="flex items-start justify-between gap-3">
+   168→        <div className="flex items-start gap-2.5">
+   169→          <Volume2 className={cn('mt-0.5 h-4 w-4', enabled ? 'text-amber-400' : 'text-muted-foreground')} />
+   170→          <div className="min-w-0">
+   171→            <p className="text-xs font-medium">Alarm Sound</p>
+   172→            <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+   173→              Play an audible beep when a critical alarm fires. Recommended for control rooms. Stored locally per browser.
+   174→            </p>
+   175→          </div>
+   176→        </div>
+   177→        <div className="flex shrink-0 items-center gap-2">
+   178→          {enabled && (
+   179→            <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-amber-400 ring-amber-500/30">Enabled</Badge>
+   180→          )}
+   181→          <Switch checked={enabled} onCheckedChange={handleToggle} aria-label="Toggle critical alarm sound" />
+   182→        </div>
+   183→      </div>
+   184→      <div className="mt-3">
+   185→        <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={handleTest}>
+   186→          <Volume2 className="h-3 w-3" /> Test Sound
+   187→        </Button>
+   188→      </div>
+   189→    </div>
+   190→  )
+   191→}
+   192→
+   193→export function SettingsView() {
+   194→  const [s, setS] = useState<Settings | null>(null)
+   195→  const [loading, setLoading] = useState(true)
+   196→  const [section, setSection] = useState<Section>('general')
+   197→
+   198→  useEffect(() => {
+   199→    fetch('/api/indos/settings')
+   200→      .then(r => r.json())
+   201→      .then((d) => { setS(d); setLoading(false) })
+   202→      .catch(() => { setLoading(false); toast.error('Failed to load settings') })
+   203→  }, [])
+   204→
+   205→  return (
+   206→    <div className="space-y-5 p-4 sm:p-6">
+   207→      <ViewHeader
+   208→        title="System Settings"
+   209→        description="Configuration hub for the entire self-hosted IndOS stack — services, security, observability, AI and backup."
+   210→        icon={<Settings className="h-5 w-5" />}
+   211→        actions={
+   212→          <Badge variant="outline" className="h-8 gap-1.5 px-3 text-xs">
+   213→            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> All services healthy
+   214→          </Badge>
+   215→        }
+   216→      />
+   217→
+   218→      {/* KPIs */}
+   219→      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+   220→        {loading ? (
+   221→          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)
+   222→        ) : (
+   223→          <>
+   224→            <KpiCard label="Stack Services" value="12" icon={Boxes} accent="emerald" hint="all running" />
+   225→            <KpiCard label="Platform Version" value={val(s, 'system', 'platform.version', '1.0.0')} icon={CircuitBoard} accent="sky" hint={val(s, 'system', 'platform.name', 'IndOS')} />
+   226→            <KpiCard label="Auth Provider" value="OIDC" icon={Fingerprint} accent="violet" hint={val(s, 'security', 'auth.provider', 'Keycloak')} />
+   227→            <KpiCard label="Backup Schedule" value="02:00" unit="ICT" icon={DatabaseBackup} accent="amber" hint="daily · last successful" />
+   228→          </>
+   229→        )}
+   230→      </div>
+   231→
+   232→      <div className="grid gap-4 lg:grid-cols-4">
+   233→        {/* Left nav */}
+   234→        <Card className="h-fit p-2 lg:col-span-1">
+   235→          <nav className="space-y-0.5">
+   236→            {NAV.map(item => {
+   237→              const Icon = item.icon
+   238→              const active = section === item.id
+   239→              return (
+   240→                <button
+   241→                  key={item.id}
+   242→                  onClick={() => setSection(item.id)}
+   243→                  className={cn(
+   244→                    'flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-xs font-medium transition-colors',
+   245→                    active
+   246→                      ? 'bg-primary/10 text-primary ring-1 ring-primary/20'
+   247→                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+   248→                  )}
+   249→                >
+   250→                  <Icon className="h-3.5 w-3.5" /> {item.label}
+   251→                </button>
+   252→              )
+   253→            })}
+   254→          </nav>
+   255→          <Separator className="my-2" />
+   256→          <div className="px-3 py-2">
+   257→            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Build</p>
+   258→            <p className="mt-0.5 font-mono text-[11px] text-foreground/80">indos-{val(s, 'system', 'platform.version', '1.0.0')}</p>
+   259→            <p className="mt-0.5 text-[10px] text-muted-foreground">Self-hosted · SQLite · ICT</p>
+   260→          </div>
+   261→        </Card>
+   262→
+   263→        {/* Section content */}
+   264→        <div className="space-y-4 lg:col-span-3">
+   265→          {loading ? (
+   266→            <div className="space-y-3">
+   267→              <Skeleton className="h-8 w-48" />
+   268→              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+   269→            </div>
+   270→          ) : (
+   271→            <>
+   272→              {/* GENERAL */}
+   273→              {section === 'general' && (
+   274→                <Card>
+   275→                  <CardHeader className="pb-3">
+   276→                    <CardTitle className="flex items-center gap-2 text-base">
+   277→                      <Sliders className="h-4 w-4 text-emerald-400" /> General
+   278→                    </CardTitle>
+   279→                    <CardDescription className="text-xs">Platform identity, regional defaults and appearance</CardDescription>
+   280→                  </CardHeader>
+   281→                  <CardContent className="grid gap-3 md:grid-cols-2">
+   282→                    <ReadOnlyField label="Platform Name" value={val(s, 'system', 'platform.name', 'IndOS')} />
+   283→                    <ReadOnlyField label="Version" value={val(s, 'system', 'platform.version', '1.0.0')} />
+   284→                    <ReadOnlyField label="Organization" value={val(s, 'system', 'platform.org', 'Northwind Industrial Group')} />
+   285→                    <ReadOnlyField label="Reverse Proxy" value={val(s, 'system', 'proxy', 'Nginx')} />
+   286→                    <ReadOnlyField label="DNS Resolver" value={val(s, 'system', 'dns', 'Pi-hole')} />
+   287→                    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   288→                      <div className="flex items-center justify-between">
+   289→                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Theme</p>
+   290→                        <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px] text-muted-foreground" onClick={() => toast.info('Theme is locked to dark')}>
+   291→                          <Edit className="h-3 w-3" /> Edit
+   292→                        </Button>
+   293→                      </div>
+   294→                      <Select defaultValue="dark">
+   295→                        <SelectTrigger className="mt-1 h-8 w-full text-xs"><SelectValue /></SelectTrigger>
+   296→                        <SelectContent>
+   297→                          <SelectItem value="dark">Dark (industrial)</SelectItem>
+   298→                          <SelectItem value="midnight">Midnight</SelectItem>
+   299→                          <SelectItem value="slate">Slate</SelectItem>
+   300→                        </SelectContent>
+   301→                      </Select>
+   302→                    </div>
+   303→                    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   304→                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Default Timezone</p>
+   305→                      <p className="mt-1 text-sm font-medium">Asia/Bangkok (ICT, UTC+7)</p>
+   306→                    </div>
+   307→                    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   308→                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Language</p>
+   309→                      <p className="mt-1 text-sm font-medium">English (en-US)</p>
+   310→                    </div>
+   311→                  </CardContent>
+   312→                </Card>
+   313→              )}
+   314→
+   315→              {/* CONNECTIVITY */}
+   316→              {section === 'connectivity' && (
+   317→                <Card>
+   318→                  <CardHeader className="pb-3">
+   319→                    <CardTitle className="flex items-center gap-2 text-base">
+   320→                      <Network className="h-4 w-4 text-sky-400" /> Connectivity
+   321→                    </CardTitle>
+   322→                    <CardDescription className="text-xs">Core services forming the IndOS data plane</CardDescription>
+   323→                  </CardHeader>
+   324→                  <CardContent>
+   325→                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+   326→                      <ServiceCard icon={Radio} name="MQTT Broker" version="Mosquitto 2.0" endpoint={val(s, 'connectivity', 'mqtt.broker', 'mosquitto.indos.local:1883')} accent="sky" onConfigure={() => toast.info('MQTT config is demo-only')} />
+   327→                      <ServiceCard icon={DatabaseBackup} name="Time-Series DB" version={val(s, 'connectivity', 'timeseries.backend', 'InfluxDB 2.7')} endpoint="influxdb.indos.local:8086" accent="violet" onConfigure={() => toast.info('InfluxDB config is demo-only')} />
+   328→                      <ServiceCard icon={HardDrive} name="Cache" version={val(s, 'connectivity', 'cache.backend', 'Redis 7.2')} endpoint="redis.indos.local:6379" accent="rose" onConfigure={() => toast.info('Redis config is demo-only')} />
+   329→                      <ServiceCard icon={Boxes} name="Object Storage" version={val(s, 'connectivity', 'storage.backend', 'MinIO')} endpoint="minio.indos.local:9000" accent="amber" onConfigure={() => toast.info('MinIO config is demo-only')} />
+   330→                      <ServiceCard icon={Globe} name="Reverse Proxy" version={val(s, 'system', 'proxy', 'Nginx')} endpoint=":443 TLS" accent="emerald" onConfigure={() => toast.info('Nginx config is demo-only')} />
+   331→                      <ServiceCard icon={Workflow} name="Node-RED" version="3.1" endpoint="nodered.indos.local:1880" accent="sky" onConfigure={() => toast.info('Node-RED config is demo-only')} />
+   332→                    </div>
+   333→                  </CardContent>
+   334→                </Card>
+   335→              )}
+   336→
+   337→              {/* SECURITY */}
+   338→              {section === 'security' && (
+   339→                <Card>
+   340→                  <CardHeader className="pb-3">
+   341→                    <CardTitle className="flex items-center gap-2 text-base">
+   342→                      <ShieldCheck className="h-4 w-4 text-emerald-400" /> Security
+   343→                    </CardTitle>
+   344→                    <CardDescription className="text-xs">Identity, network and application-layer hardening</CardDescription>
+   345→                  </CardHeader>
+   346→                  <CardContent className="space-y-3">
+   347→                    <div className="grid gap-3 md:grid-cols-2">
+   348→                      <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   349→                        <div className="flex items-center justify-between">
+   350→                          <div className="flex items-center gap-2">
+   351→                            <Fingerprint className="h-4 w-4 text-violet-400" />
+   352→                            <div>
+   353→                              <p className="text-xs font-medium">Identity Provider</p>
+   354→                              <p className="text-[10px] text-muted-foreground">{val(s, 'security', 'auth.provider', 'Keycloak (OIDC)')}</p>
+   355→                            </div>
+   356→                          </div>
+   357→                          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30">Connected</Badge>
+   358→                        </div>
+   359→                        <Button size="sm" variant="outline" className="mt-3 h-7 w-full gap-1.5 text-xs" onClick={() => toast.info('Keycloak admin is demo-only')}>
+   360→                          <ExternalLink className="h-3 w-3" /> Open Keycloak
+   361→                        </Button>
+   362→                      </div>
+   363→                      <div className="rounded-md border border-border/50 bg-card/40 p-3">
+   364→                        <div className="flex items-center justify-between">
+   365→                          <div className="flex items-center gap-2">
+   366→                            <Lock className="h-4 w-4 text-sky-400" />
+   367→                            <div>
+   368→                              <p className="text-xs font-medium">WireGuard VPN</p>
+   369→                              <p className="text-[10px] text-muted-foreground">{val(s, 'security', 'vpn', 'WireGuard')} · 5 peers</p>
+   370→                            </div>
+   371→                          </div>
+   372→                          <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30">Up</Badge>
+   373→                        </div>
+   374→                        <Button size="sm" variant="outline" className="mt-3 h-7 w-full gap-1.5 text-xs" onClick={() => toast.info('WireGuard config is demo-only')}>
+   375→                          <Settings className="h-3 w-3" /> Manage Peers
+   376→                        </Button>
+   377→                      </div>
+   378→                    </div>
+   379→                    <div className="grid gap-2 md:grid-cols-2">
+   380→                      <ToggleRow icon={ShieldCheck} title="Two-Factor Auth (2FA)" description={val(s, 'security', 'auth.2fa', 'enabled') + ' · TOTP via authenticator apps'} defaultOn accent="emerald" />
+   381→                      <ToggleRow icon={Globe} title="Pi-hole DNS" description="Network-wide ad & telemetry blocking" defaultOn accent="amber" />
+   382→                      <ToggleRow icon={Gauge} title="Rate Limiting" description="100 req/min per IP on auth endpoints" defaultOn accent="sky" />
+   383→                      <ToggleRow icon={Bug} title="CSRF / XSS Protection" description="Strict CSP, signed cookies, helmet middleware" defaultOn accent="violet" />
+   384→                      <ToggleRow icon={ShieldAlert} title="Modbus Write Guard" description="Block unauthorized Modbus write commands at gateway" defaultOn accent="rose" />
+   385→                      <ToggleRow icon={Lock} title="TLS Everywhere" description="Force HTTPS, mTLS for device brokers" defaultOn accent="emerald" />
+   386→                    </div>
+   387→                  </CardContent>
+   388→                </Card>
+   389→              )}
+   390→
+   391→              {/* OBSERVABILITY */}
+   392→              {section === 'observability' && (
+   393→                <Card>
+   394→                  <CardHeader className="pb-3">
+   395→                    <CardTitle className="flex items-center gap-2 text-base">
+   396→                      <Activity className="h-4 w-4 text-violet-400" /> Observability
+   397→                    </CardTitle>
+   398→                    <CardDescription className="text-xs">Metrics, logs and traces for the IndOS control plane</CardDescription>
+   399→                  </CardHeader>
+   400→                  <CardContent>
+   401→                    <div className="grid gap-3 md:grid-cols-2">
+   402→                      <ServiceCard icon={Gauge} name="Prometheus" version={val(s, 'observability', 'monitoring.metrics', 'Prometheus')} endpoint="prometheus.indos.local:9090" accent="amber" onConfigure={() => toast.info('Prometheus is demo-only')} />
+   403→                      <ServiceCard icon={LineChart} name="Grafana" version="10.4" endpoint="grafana.indos.local:3001" accent="amber" onConfigure={() => toast.info('Grafana is demo-only')} />
+   404→                      <ServiceCard icon={FileBarChart} name="Loki" version={val(s, 'observability', 'monitoring.logs', 'Loki')} endpoint="loki.indos.local:3100" accent="violet" onConfigure={() => toast.info('Loki is demo-only')} />
+   405→                      <ServiceCard icon={Search} name="OpenTelemetry" version={val(s, 'observability', 'monitoring.tracing', 'OpenTelemetry')} endpoint="otel-collector:4317" accent="sky" onConfigure={() => toast.info('OTel is demo-only')} />
+   406→                    </div>
+   407→                  </CardContent>
+   408→                </Card>
+   409→              )}
+   410→
+   411→              {/* ALERTS */}
+   412→              {section === 'alerts' && (
+   413→                <Card>
+   414→                  <CardHeader className="pb-3">
+   415→                    <CardTitle className="flex items-center gap-2 text-base">
+   416→                      <BellRing className="h-4 w-4 text-amber-400" /> Alerts
+   417→                    </CardTitle>
+   418→                    <CardDescription className="text-xs">Operator-safety audible &amp; visual alarms — recommended for control rooms</CardDescription>
+   419→                  </CardHeader>
+   420→                  <CardContent className="space-y-3">
+   421→                    <AlarmSoundCard />
+   422→                    <div className="flex items-start gap-2.5 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+   423→                      <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+   424→                      <div>
+   425→                        <p className="text-xs font-medium text-foreground">Banners are always visible</p>
+   426→                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+   427→                          Connection-loss and stale-data banners are always visible (cannot be disabled). They are part of the operator-safety surface, not a preference.
+   428→                        </p>
+   429→                      </div>
+   430→                    </div>
+   431→                  </CardContent>
+   432→                </Card>
+   433→              )}
+   434→
+   435→              {/* AI / ML */}
+   436→              {section === 'ai' && (
+   437→                <Card>
+   438→                  <CardHeader className="pb-3">
+   439→                    <CardTitle className="flex items-center gap-2 text-base">
+   440→                      <Bot className="h-4 w-4 text-violet-400" /> AI / ML
+   441→                    </CardTitle>
+   442→                    <CardDescription className="text-xs">On-prem inference, vector search and computer vision stack</CardDescription>
+   443→                  </CardHeader>
+   444→                  <CardContent>
+   445→                    <div className="grid gap-3 md:grid-cols-2">
+   446→                      <ServiceCard icon={Sparkles} name="Ollama LLM" version={val(s, 'ai', 'ai.backend', 'Ollama (llama3.1:8b)')} endpoint="ollama.indos.local:11434" accent="violet" onConfigure={() => toast.info('Ollama is demo-only')} />
+   447→                      <ServiceCard icon={Boxes} name="Qdrant Vector DB" version={val(s, 'ai', 'ai.vector_db', 'Qdrant 1.8')} endpoint="qdrant.indos.local:6333" accent="sky" onConfigure={() => toast.info('Qdrant is demo-only')} />
+   448→                      <ServiceCard icon={Camera} name="Frigate NVR" version="0.13" endpoint="frigate.indos.local:5000" accent="rose" onConfigure={() => toast.info('Frigate is demo-only')} />
+   449→                      <ServiceCard icon={Cpu} name="YOLO Detector" version="yolov8n" endpoint="cuda:0 · GPU accelerated" accent="amber" onConfigure={() => toast.info('YOLO is demo-only')} />
+   450→                    </div>
+   451→                    <div className="mt-3 flex flex-wrap gap-2">
+   452→                      <Button size="sm" variant="default" className="h-8 gap-1.5" onClick={() => toast.info('Opening Ollama playground (demo)')}>
+   453→                        <ExternalLink className="h-3.5 w-3.5" /> Open Ollama
+   454→                      </Button>
+   455→                      <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => toast.info('Reindexing embeddings (demo)')}>
+   456→                        <Sparkles className="h-3.5 w-3.5" /> Reindex Embeddings
+   457→                      </Button>
+   458→                      <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => toast.info('Loading model (demo)')}>
+   459→                        <Cpu className="h-3.5 w-3.5" /> Pull Model
+   460→                      </Button>
+   461→                    </div>
+   462→                  </CardContent>
+   463→                </Card>
+   464→              )}
+   465→
+   466→              {/* BACKUP */}
+   467→              {section === 'backup' && (
+   468→                <Card>
+   469→                  <CardHeader className="pb-3">
+   470→                    <CardTitle className="flex items-center gap-2 text-base">
+   471→                      <DatabaseBackup className="h-4 w-4 text-amber-400" /> Backup & Recovery
+   472→                    </CardTitle>
+   473→                    <CardDescription className="text-xs">Automated snapshots of the IndOS database, config and object storage</CardDescription>
+   474→                  </CardHeader>
+   475→                  <CardContent className="space-y-3">
+   476→                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+   477→                      <ReadOnlyField label="Schedule" value={val(s, 'system', 'backup.schedule', 'daily 02:00 ICT')} />
+   478→                      <ReadOnlyField label="Retention" value="30 days" />
+   479→                      <ReadOnlyField label="Last Backup" value="Today 02:00 · 412 MB" accent="text-emerald-400" />
+   480→                      <ReadOnlyField label="Destination" value="MinIO bucket: indos-backup" />
+   481→                    </div>
+   482→                    <div className="flex flex-wrap gap-2">
+   483→                      <Button size="sm" className="h-8 gap-1.5" onClick={() => toast.success('Backup started', { description: 'Snapshot queued for immediate execution' })}>
+   484→                        <DatabaseBackup className="h-3.5 w-3.5" /> Run Backup Now
+   485→                      </Button>
+   486→                      <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => toast.info('Restore wizard is demo-only')}>
+   487→                        <RotateCcw className="h-3.5 w-3.5" /> Restore
+   488→                      </Button>
+   489→                    </div>
+   490→                    <Separator />
+   491→                    <div>
+   492→                      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium">
+   493→                        <History className="h-3.5 w-3.5 text-muted-foreground" /> Version History
+   494→                      </p>
+   495→                      <ScrollArea className="indos-scroll max-h-48">
+   496→                        <div className="space-y-1.5">
+   497→                          {[
+   498→                            { ts: 'Today 02:00', size: '412 MB', status: 'success' },
+   499→                            { ts: 'Yesterday 02:00', size: '408 MB', status: 'success' },
+   500→                            { ts: '2 days ago 02:00', size: '405 MB', status: 'success' },
+   501→                            { ts: '3 days ago 02:00', size: '402 MB', status: 'success' },
+   502→                            { ts: '4 days ago 02:00', size: '399 MB', status: 'success' },
+   503→                          ].map(v => (
+   504→                            <div key={v.ts} className="flex items-center justify-between rounded-md border border-border/50 bg-card/40 p-2 text-xs">
+   505→                              <span className="flex items-center gap-2">
+   506→                                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> {v.ts}
+   507→                              </span>
+   508→                              <span className="font-mono text-[11px] text-muted-foreground">{v.size}</span>
+   509→                              <Button variant="ghost" size="sm" className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-foreground" onClick={() => toast.info(`Restoring ${v.ts} (demo)`)}>
+   510→                                Restore
+   511→                              </Button>
+   512→                            </div>
+   513→                          ))}
+   514→                        </div>
+   515→                      </ScrollArea>
+   516→                    </div>
+   517→                  </CardContent>
+   518→                </Card>
+   519→              )}
+   520→
+   521→              {/* LICENSE */}
+   522→              {section === 'license' && (
+   523→                <Card>
+   524→                  <CardHeader className="pb-3">
+   525→                    <CardTitle className="flex items-center gap-2 text-base">
+   526→                      <KeySquare className="h-4 w-4 text-emerald-400" /> License
+   527→                    </CardTitle>
+   528→                    <CardDescription className="text-xs">Self-hosted Community Edition — no subscription, no telemetry</CardDescription>
+   529→                  </CardHeader>
+   530→                  <CardContent className="space-y-3">
+   531→                    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-4">
+   532→                      <div className="flex items-center gap-2">
+   533→                        <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+   534→                        <div>
+   535→                          <p className="text-sm font-semibold">IndOS Community Edition</p>
+   536→                          <p className="text-xs text-muted-foreground">Self-hosted · No subscription required</p>
+   537→                        </div>
+   538→                      </div>
+   539→                      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+   540→                        <div className="rounded-md border border-border/50 bg-card/40 p-2">
+   541→                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">License Key</p>
+   542→                          <p className="mt-0.5 font-mono text-[11px] text-foreground/90">INDOS-CE-OPEN-SELFHOST-NOLIMIT</p>
+   543→                        </div>
+   544→                        <div className="rounded-md border border-border/50 bg-card/40 p-2">
+   545→                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Seats / Devices</p>
+   546→                          <p className="mt-0.5 text-sm font-medium">Unlimited</p>
+   547→                        </div>
+   548→                      </div>
+   549→                    </div>
+   550→                    <div className="grid gap-2 md:grid-cols-3">
+   551→                      <ReadOnlyField label="Edition" value="Community" />
+   552→                      <ReadOnlyField label="Issued" value="2024-01-01" />
+   553→                      <ReadOnlyField label="Support" value="Community + GitHub Issues" />
+   554→                    </div>
+   555→                    <div className="flex items-center gap-2 rounded-md border border-border/50 bg-card/40 p-3">
+   556→                      <Sparkles className="h-4 w-4 text-violet-400" />
+   557→                      <p className="text-xs text-muted-foreground">
+   558→                        You're running the full open-source stack. <span className="text-foreground">Upgrade not required</span> — all features are unlocked.
+   559→                      </p>
+   560→                    </div>
+   561→                  </CardContent>
+   562→                </Card>
+   563→              )}
+   564→            </>
+   565→          )}
+   566→        </div>
+   567→      </div>
+   568→    </div>
+   569→  )
+   570→}
+   571→

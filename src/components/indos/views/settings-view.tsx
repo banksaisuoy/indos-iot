@@ -15,18 +15,20 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import {
-  Settings, Sliders, Network, ShieldCheck, Activity, Bot, DatabaseBackup, KeySquare, Edit, ExternalLink, Cpu, Server, Boxes, Radio, HardDrive, Workflow, Lock, Fingerprint, Bug, Globe, FileBarChart, LineChart, Search, Camera, Sparkles, History, RotateCcw, CheckCircle2, CircuitBoard, Wifi, ShieldAlert, Gauge,
+  Settings, Sliders, Network, ShieldCheck, Activity, Bot, DatabaseBackup, KeySquare, Edit, ExternalLink, Cpu, Server, Boxes, Radio, HardDrive, Workflow, Lock, Fingerprint, Bug, Globe, FileBarChart, LineChart, Search, Camera, Sparkles, History, RotateCcw, CheckCircle2, CircuitBoard, Wifi, ShieldAlert, Gauge, BellRing, Volume2,
 } from 'lucide-react'
+import { isAlarmSoundEnabled, setAlarmSoundEnabled, playCriticalBeep } from '@/lib/indos/alarm-sound'
 
 type Settings = Record<string, Record<string, string>>
 
-type Section = 'general' | 'connectivity' | 'security' | 'observability' | 'ai' | 'backup' | 'license'
+type Section = 'general' | 'connectivity' | 'security' | 'observability' | 'ai' | 'backup' | 'license' | 'alerts'
 
 const NAV: { id: Section; label: string; icon: any }[] = [
   { id: 'general', label: 'General', icon: Sliders },
   { id: 'connectivity', label: 'Connectivity', icon: Network },
   { id: 'security', label: 'Security', icon: ShieldCheck },
   { id: 'observability', label: 'Observability', icon: Activity },
+  { id: 'alerts', label: 'Alerts', icon: BellRing },
   { id: 'ai', label: 'AI / ML', icon: Bot },
   { id: 'backup', label: 'Backup', icon: DatabaseBackup },
   { id: 'license', label: 'License', icon: KeySquare },
@@ -121,6 +123,69 @@ function ReadOnlyField({ label, value, accent }: { label: string; value: string;
         </Button>
       </div>
       <p className={cn('mt-1 text-sm font-medium', accent)}>{value}</p>
+    </div>
+  )
+}
+
+/**
+ * Operator-preference card for the critical-alarm audible beep. The setting
+ * is stored per-browser in localStorage (no API, no sync) so each operator /
+ * kiosk can choose independently.
+ */
+function AlarmSoundCard() {
+  const [enabled, setEnabled] = useState<boolean>(true)
+
+  // Hydrate from localStorage after mount (SSR-safe).
+  useEffect(() => {
+    setEnabled(isAlarmSoundEnabled())
+  }, [])
+
+  const handleToggle = (next: boolean) => {
+    setEnabled(next)
+    setAlarmSoundEnabled(next)
+    if (next) {
+      toast.success('Critical alarm sound enabled', {
+        description: 'An audible 3-beep pattern will play when a critical alarm fires.',
+      })
+      // Preview the beep immediately so the operator can confirm their speakers work.
+      // Note: this runs inside the click handler — satisfies the autoplay gesture.
+      playCriticalBeep()
+    } else {
+      toast.info('Critical alarm sound muted', {
+        description: 'Visual banners and toasts remain. Recommended only for mobile browsing.',
+      })
+    }
+  }
+
+  const handleTest = () => {
+    playCriticalBeep()
+    toast.info('Test beep played', { description: 'If you did not hear it, check browser audio output.' })
+  }
+
+  return (
+    <div className="rounded-md border border-border/50 bg-card/40 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-start gap-2.5">
+          <Volume2 className={cn('mt-0.5 h-4 w-4', enabled ? 'text-amber-400' : 'text-muted-foreground')} />
+          <div className="min-w-0">
+            <p className="text-xs font-medium">Alarm Sound</p>
+            <p className="mt-0.5 text-[10px] leading-relaxed text-muted-foreground">
+              Play an audible beep when a critical alarm fires. Recommended for control rooms. Stored locally per browser.
+            </p>
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {enabled && (
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-amber-400 ring-amber-500/30">Enabled</Badge>
+          )}
+          <Switch checked={enabled} onCheckedChange={handleToggle} aria-label="Toggle critical alarm sound" />
+        </div>
+      </div>
+      <div className="mt-3">
+        <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs" onClick={handleTest}>
+          <Volume2 className="h-3 w-3" /> Test Sound
+        </Button>
+      </div>
     </div>
   )
 }
@@ -338,6 +403,30 @@ export function SettingsView() {
                       <ServiceCard icon={LineChart} name="Grafana" version="10.4" endpoint="grafana.indos.local:3001" accent="amber" onConfigure={() => toast.info('Grafana is demo-only')} />
                       <ServiceCard icon={FileBarChart} name="Loki" version={val(s, 'observability', 'monitoring.logs', 'Loki')} endpoint="loki.indos.local:3100" accent="violet" onConfigure={() => toast.info('Loki is demo-only')} />
                       <ServiceCard icon={Search} name="OpenTelemetry" version={val(s, 'observability', 'monitoring.tracing', 'OpenTelemetry')} endpoint="otel-collector:4317" accent="sky" onConfigure={() => toast.info('OTel is demo-only')} />
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* ALERTS */}
+              {section === 'alerts' && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <BellRing className="h-4 w-4 text-amber-400" /> Alerts
+                    </CardTitle>
+                    <CardDescription className="text-xs">Operator-safety audible &amp; visual alarms — recommended for control rooms</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <AlarmSoundCard />
+                    <div className="flex items-start gap-2.5 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                      <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                      <div>
+                        <p className="text-xs font-medium text-foreground">Banners are always visible</p>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          Connection-loss and stale-data banners are always visible (cannot be disabled). They are part of the operator-safety surface, not a preference.
+                        </p>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>

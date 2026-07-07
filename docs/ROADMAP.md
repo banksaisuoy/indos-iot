@@ -2,7 +2,7 @@
 
 > Living document. Updated after each phase. Priorities: **P0** (blocks production scale-out) → **P3** (long-term strategic).
 
-## Completed Phases (4–11)
+## Completed Phases (4–12)
 
 | Phase | Title | Key Outcome | Date |
 |-------|-------|-------------|------|
@@ -14,8 +14,9 @@
 | 9 | Redis Cache + Socket.io Rooms | `ioredis` + in-memory LRU fallback + project-scoped socket rooms (90% traffic reduction) | 2025-07 |
 | 10 | E2E Tests + Metrics + Audit | 14 Playwright tests + public `/api/metrics` + final security audit (55 total tests pass) | 2025-07 |
 | 11 | Per-Tenant `orgId` Scoping | `orgScope(session)` / `scopedProjectFilter` helpers applied to all list endpoints; admin cross-org, engineers org-scoped; second org + user seeded; `audit` opened to viewers (self-only); P2.7 real client-IP capture landed early | 2025-07 |
+| 12 | Field-Ops Hardening | Operator-safety banners (connection-loss + critical-alarm persistent banner + audio), real user/org management (POST/PATCH APIs + last-admin protection), bulk alarm ack + CSV export (alarms + devices), real device-detail actions (telemetry chart + OTA navigation), stale-device badge, alarm-sound toggle. Closes 10 real-world pain points identified in a plant-floor review. 81/81 tests pass. | 2025-07 |
 
-**Current state:** Production-ready for **multi-tenant** SaaS deployments. Per-tenant data isolation enforced across devices, alarms, work orders, projects, machines, organizations, users, audit logs, and overview aggregates. Admins (cross-org) and platform users (null orgId) see everything — backward-compatible. 41/41 unit tests pass. Lint + typecheck clean.
+**Current state:** Production-ready for **multi-tenant** SaaS deployments AND validated against real plant-floor operator workflows. Per-tenant data isolation enforced. All operator-safety hazards (frozen telemetry, vanishing critical alarms, fake buttons, no CSV, no bulk ack) fixed. 81/81 unit tests pass. Lint + typecheck clean.
 
 ---
 

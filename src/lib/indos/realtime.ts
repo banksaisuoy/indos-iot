@@ -7,12 +7,25 @@ import type { TelemetryPoint, DeviceVital, SystemMetrics, AlarmEvent } from './t
 // Path MUST be "/" and the port is passed via XTransformPort query param.
 const SOCKET_URL = '/' // relative; caddy forwards based on XTransformPort
 
+// Stale-data threshold: if no telemetry/vitals/system message arrives within
+// this window while "connected", the dashboard is showing frozen values.
+const STALE_THRESHOLD_MS = 60_000
+
 interface RealtimeState {
   connected: boolean
   telemetry: Record<string, TelemetryPoint> // keyed by deviceId
   vitals: Record<string, DeviceVital>
   system: SystemMetrics | null
   recentAlarms: AlarmEvent[]
+  /** Epoch ms of the most recent telemetry/vitals/system message received. */
+  lastMessageAt: number
+  /**
+   * Derived (NOT stored in state): true when the socket reports `connected`
+   * but no telemetry/vitals/system message has arrived in the last
+   * STALE_THRESHOLD_MS. Recomputed on every hook invocation so consumers that
+   * tick (e.g. the topbar clock) see a fresh value.
+   */
+  isStale: boolean
 }
 
 let socket: Socket | null = null
@@ -32,19 +45,20 @@ function getSocket(): Socket {
 }
 
 export function useRealtime(): RealtimeState & { ackAlarm: (id: string) => void } {
-  const [state, setState] = useState<RealtimeState>({
+  const [state, setState] = useState<Omit<RealtimeState, 'isStale'>>({
     connected: false,
     telemetry: {},
     vitals: {},
     system: null,
     recentAlarms: [],
+    lastMessageAt: Date.now(),
   })
   const stateRef = useRef(state)
   useEffect(() => {
     stateRef.current = state
   }, [state])
 
-  const patch = useCallback((p: Partial<RealtimeState>) => {
+  const patch = useCallback((p: Partial<Omit<RealtimeState, 'isStale'>>) => {
     const next = { ...stateRef.current, ...p }
     stateRef.current = next
     setState(next)
@@ -53,20 +67,20 @@ export function useRealtime(): RealtimeState & { ackAlarm: (id: string) => void 
   useEffect(() => {
     const s = getSocket()
 
-    const onConnect = () => patch({ connected: true })
+    const onConnect = () => patch({ connected: true, lastMessageAt: Date.now() })
     const onDisconnect = () => patch({ connected: false })
 
     const onTelemetry = (batch: TelemetryPoint[]) => {
       const t = { ...stateRef.current.telemetry }
       for (const p of batch) t[p.deviceId] = p
-      patch({ telemetry: t })
+      patch({ telemetry: t, lastMessageAt: Date.now() })
     }
     const onVitals = (arr: DeviceVital[]) => {
       const v = { ...stateRef.current.vitals }
       for (const d of arr) v[d.id] = d
-      patch({ vitals: v })
+      patch({ vitals: v, lastMessageAt: Date.now() })
     }
-    const onSystem = (m: SystemMetrics) => patch({ system: m })
+    const onSystem = (m: SystemMetrics) => patch({ system: m, lastMessageAt: Date.now() })
     const onAlarm = (a: AlarmEvent) => {
       const alarms = [a, ...stateRef.current.recentAlarms].slice(0, 50)
       patch({ recentAlarms: alarms })
@@ -101,5 +115,8 @@ export function useRealtime(): RealtimeState & { ackAlarm: (id: string) => void 
     getSocket().emit('ack-alarm', id)
   }, [])
 
-  return { ...state, ackAlarm }
+  // Recompute isStale on every render so consumers that tick (e.g. topbar clock)
+  // see a fresh value even when no socket event has fired.
+  const isStale = state.connected && Date.now() - state.lastMessageAt > STALE_THRESHOLD_MS
+  return { ...state, isStale, ackAlarm }
 }

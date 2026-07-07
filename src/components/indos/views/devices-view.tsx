@@ -5,7 +5,7 @@ import { useRealtime } from '@/lib/indos/realtime'
 import { KpiCard } from '@/components/indos/shared/kpi-card'
 import { ViewHeader } from '@/components/indos/shared/view-header'
 import { StatusBadge } from '@/components/indos/shared/status-badge'
-import { LiveDot } from '@/components/indos/shared/charts'
+import { LiveDot, Sparkline } from '@/components/indos/shared/charts'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -27,8 +27,10 @@ import { toast } from 'sonner'
 import {
   Cpu, Search, Wifi, Battery, Thermometer, MemoryStick, Radio,
   RefreshCw, ArrowUpFromLine, Activity, MapPin, Server, HardDrive, Signal,
+  Download, Clock, ChevronDown, ChevronUp, Loader2, AlertTriangle, RotateCw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { toCSV, downloadCSV, csvTimestamp } from '@/lib/csv'
 
 interface Device {
   id: string
@@ -52,8 +54,31 @@ interface Device {
 
 interface ProjectLite { slug: string; name: string }
 
+// Telemetry point shape returned by GET /api/indos/telemetry/[deviceId].
+// Influx path: { ts, value, metric, unit }. SQLite path: { id, deviceId, metric, value, ts }.
+interface TelemetryPoint {
+  ts: string
+  value: number
+  metric: string
+  unit?: string | null
+}
+
 const DEVICE_TYPES = ['sensor', 'meter', 'gateway', 'plc', 'relay', 'camera', 'inverter', 'controller']
 const STATUSES = ['online', 'offline', 'fault', 'maintenance']
+
+// A device is "stale" if it claims to be online but hasn't reported in 10+ min.
+// Threshold chosen to catch silent network drops without false-positiving on
+// long-interval pollers (most IndOS devices report ≤ 5 min intervals).
+const STALE_THRESHOLD_MS = 10 * 60 * 1000
+
+function isStale(d: Device): boolean {
+  if (d.status !== 'online') return false
+  try {
+    return Date.now() - new Date(d.lastSeen).getTime() > STALE_THRESHOLD_MS
+  } catch {
+    return false
+  }
+}
 
 const TYPE_CLS: Record<string, string> = {
   sensor: 'bg-sky-500/15 text-sky-400 ring-sky-500/30',
@@ -80,6 +105,9 @@ const PROTO_CLS: Record<string, string> = {
   zigbee: 'bg-violet-500/15 text-violet-400 ring-violet-500/30',
 }
 
+// Sparkline palette — one color per metric, max 6 metrics shown.
+const SPARK_COLORS = ['#34d399', '#fbbf24', '#38bdf8', '#f472b6', '#a78bfa', '#fb7185']
+
 function relTime(iso: string) {
   const diff = Date.now() - new Date(iso).getTime()
   const s = Math.floor(diff / 1000)
@@ -92,7 +120,24 @@ function relTime(iso: string) {
   return `${d}d ago`
 }
 
+function StaleBadge({ className }: { className?: string }) {
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        'bg-amber-500/10 text-amber-400 ring-amber-500/30',
+        'inline-flex items-center gap-1 px-1.5 py-0 text-[10px] font-medium uppercase',
+        className,
+      )}
+      title="Device claims online but has not reported in over 10 minutes — investigate."
+    >
+      <Clock className="h-2.5 w-2.5" /> stale
+    </Badge>
+  )
+}
+
 export function DevicesView() {
+  const { setView, setPrefillDevice } = useIndOS()
   const { activeProject } = useIndOS()
   const rt = useRealtime()
   const [devices, setDevices] = useState<Device[] | null>(null)
@@ -103,6 +148,7 @@ export function DevicesView() {
   const [status, setStatus] = useState<string>('all')
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Device | null>(null)
+  const [telemetryOpen, setTelemetryOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -184,6 +230,44 @@ export function DevicesView() {
     return devices.filter(d => d.name.toLowerCase().includes(q) || d.mac.toLowerCase().includes(q) || (d.ip || '').toLowerCase().includes(q))
   }, [devices, query])
 
+  // CSV export — exports the CURRENT filtered list (respects search + filter bar).
+  function exportCSV() {
+    if (!filtered.length) {
+      toast.info('No devices to export', { description: 'Adjust your filters and try again.' })
+      return
+    }
+    const headers = [
+      'Name', 'MAC', 'Serial', 'Type', 'Protocol', 'Project', 'Machine',
+      'Status', 'Stale', 'Firmware', 'IP', 'CPU%', 'Memory%', 'Temperature',
+      'Signal', 'Battery%', 'LastSeen(ISO)', 'LastSeen(Local)',
+    ]
+    const rows = filtered.map(d => [
+      d.name,
+      d.mac,
+      d.serial || '',
+      d.type,
+      d.protocol,
+      d.project?.name || '',
+      d.machine?.name || '',
+      d.status,
+      isStale(d) ? 'yes' : 'no',
+      d.firmware || '',
+      d.ip || '',
+      d.cpu.toFixed(1),
+      d.memory.toFixed(1),
+      d.temperature.toFixed(1),
+      d.signal.toFixed(0),
+      d.battery != null ? d.battery.toFixed(0) : '',
+      new Date(d.lastSeen).toISOString(),
+      new Date(d.lastSeen).toLocaleString(),
+    ])
+    const csv = toCSV(headers, rows)
+    downloadCSV(`indos-devices-${csvTimestamp()}.csv`, csv)
+    toast.success(`Exported ${filtered.length} device${filtered.length === 1 ? '' : 's'} to CSV`, {
+      description: `indos-devices-${csvTimestamp()}.csv`,
+    })
+  }
+
   return (
     <div className="space-y-5 p-4 sm:p-6">
       <ViewHeader
@@ -191,9 +275,14 @@ export function DevicesView() {
         description="Edge devices, sensors, PLCs and controllers registered across the platform. Live vitals overlay when available."
         icon={<Cpu className="h-5 w-5" />}
         actions={
-          <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={refresh}>
-            <RefreshCw className="h-3.5 w-3.5" /> Refresh
-          </Button>
+          <>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={exportCSV} disabled={loading || !filtered.length}>
+              <Download className="h-3.5 w-3.5" /> Export CSV
+            </Button>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5" onClick={refresh}>
+              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+            </Button>
+          </>
         }
       />
 
@@ -290,11 +379,12 @@ export function DevicesView() {
                 <TableBody>
                   {filtered.map(d => {
                     const live = liveVitalFor(d)
+                    const stale = isStale(d)
                     return (
                       <TableRow
                         key={d.id}
                         className="cursor-pointer border-border/40"
-                        onClick={() => setSelected(d)}
+                        onClick={() => { setSelected(d); setTelemetryOpen(false) }}
                       >
                         <TableCell className="pl-4">
                           <div className="flex items-center gap-2">
@@ -320,7 +410,8 @@ export function DevicesView() {
                         <TableCell>
                           <div className="flex items-center gap-1.5">
                             <StatusBadge status={d.status} />
-                            {live && d.status === 'online' && <LiveDot color="bg-emerald-400" />}
+                            {stale && <StaleBadge />}
+                            {live && d.status === 'online' && !stale && <LiveDot color="bg-emerald-400" />}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -332,7 +423,9 @@ export function DevicesView() {
                           </div>
                         </TableCell>
                         <TableCell className="text-[11px] text-muted-foreground">{d.firmware || '—'}</TableCell>
-                        <TableCell className="pr-4 text-[11px] text-muted-foreground">{relTime(d.lastSeen)}</TableCell>
+                        <TableCell className="pr-4 text-[11px] text-muted-foreground">
+                          <span className={cn(stale && 'font-medium text-amber-400')}>{relTime(d.lastSeen)}</span>
+                        </TableCell>
                       </TableRow>
                     )
                   })}
@@ -345,9 +438,10 @@ export function DevicesView() {
 
       {/* Detail Dialog */}
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="sm:max-w-3xl">
           {selected && (() => {
             const live = liveVitalFor(selected)
+            const stale = isStale(selected)
             return (
               <>
                 <DialogHeader>
@@ -364,12 +458,13 @@ export function DevicesView() {
                       </DialogDescription>
                     </div>
                     <div className="flex items-center gap-2">
-                      {live && selected.status === 'online' && (
+                      {live && selected.status === 'online' && !stale && (
                         <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400">
                           <LiveDot color="bg-emerald-400" /> LIVE
                         </Badge>
                       )}
                       <StatusBadge status={selected.status} />
+                      {stale && <StaleBadge />}
                     </div>
                   </div>
                 </DialogHeader>
@@ -398,13 +493,40 @@ export function DevicesView() {
                     <Meta label="Protocol" value={selected.protocol} />
                     <Meta label="Firmware" value={selected.firmware || '—'} mono />
                   </div>
+
+                  {/* Telemetry history section — fetches on first expand */}
+                  <TelemetrySection
+                    deviceId={selected.id}
+                    deviceName={selected.name}
+                    open={telemetryOpen}
+                    onToggle={() => setTelemetryOpen(o => !o)}
+                  />
                 </div>
                 <DialogFooter className="gap-2">
                   <Button variant="outline" size="sm" onClick={() => setSelected(null)}>Close</Button>
-                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => toast.info('Telemetry stream opened', { description: `Live metrics for ${selected.name}` })}>
-                    <Activity className="h-3.5 w-3.5" /> View telemetry
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => setTelemetryOpen(o => !o)}
+                  >
+                    <Activity className="h-3.5 w-3.5" />
+                    {telemetryOpen ? 'Hide telemetry' : 'View telemetry'}
                   </Button>
-                  <Button size="sm" className="gap-1.5" onClick={() => toast.success('OTA job queued', { description: `${selected.name} scheduled for firmware update` })}>
+                  <Button
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => {
+                      // Hand off to OTA view — it reads prefillDeviceId on mount
+                      // and pre-selects this device in the deploy form.
+                      setPrefillDevice(selected.id, selected.name)
+                      setSelected(null)
+                      setView('ota')
+                      toast.info('Opened OTA deployment', {
+                        description: `Pre-selected ${selected.name} — choose a firmware to deploy.`,
+                      })
+                    }}
+                  >
                     <ArrowUpFromLine className="h-3.5 w-3.5" /> Send OTA
                   </Button>
                 </DialogFooter>
@@ -413,6 +535,164 @@ export function DevicesView() {
           })()}
         </DialogContent>
       </Dialog>
+    </div>
+  )
+}
+
+// ─── Telemetry section (real fetch + chart) ──────────────────────────────────
+function TelemetrySection({
+  deviceId, deviceName, open, onToggle,
+}: {
+  deviceId: string
+  deviceName: string
+  open: boolean
+  onToggle: () => void
+}) {
+  const [points, setPoints] = useState<TelemetryPoint[] | null>(null)
+  const [loadingT, setLoadingT] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [fetchedFor, setFetchedFor] = useState<string | null>(null)
+
+  const fetchTelemetry = useCallback(() => {
+    setLoadingT(true)
+    setError(null)
+    fetch(`/api/indos/telemetry/${encodeURIComponent(deviceId)}?range=24h`)
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json() as Promise<TelemetryPoint[]>
+      })
+      .then(data => {
+        if (!Array.isArray(data)) {
+          setPoints([])
+        } else {
+          // Sort chronologically (some backends return desc — normalize).
+          setPoints([...data].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime()))
+        }
+        setFetchedFor(deviceId)
+        setLoadingT(false)
+      })
+      .catch(err => {
+        setError(err?.message || 'Failed to load telemetry')
+        setLoadingT(false)
+      })
+  }, [deviceId])
+
+  // Fetch on first open (and when device changes while open).
+  useEffect(() => {
+    if (!open) return
+    if (fetchedFor === deviceId && points !== null) return
+    fetchTelemetry()
+  }, [open, deviceId, fetchedFor, points, fetchTelemetry])
+
+  if (!open) return null
+
+  return (
+    <div className="rounded-md border border-border/60 bg-card/40">
+      <div className="flex items-center justify-between border-b border-border/50 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <Activity className="h-3.5 w-3.5 text-sky-400" />
+          <span className="text-xs font-medium">Telemetry history · 24h</span>
+          <Badge variant="outline" className="bg-muted/40 text-[10px] text-muted-foreground">
+            {deviceName}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 gap-1 px-2 text-[11px]"
+            onClick={fetchTelemetry}
+            disabled={loadingT}
+            title="Re-fetch telemetry from server"
+          >
+            {loadingT
+              ? <Loader2 className="h-3 w-3 animate-spin" />
+              : <RotateCw className="h-3 w-3" />} Refresh
+          </Button>
+          <Button variant="ghost" size="sm" className="h-6 gap-1 px-2 text-[11px]" onClick={onToggle}>
+            Collapse <ChevronUp className="h-3 w-3" />
+          </Button>
+        </div>
+      </div>
+      <div className="p-3">
+        {loadingT ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading telemetry…
+          </div>
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+            <AlertTriangle className="h-5 w-5 text-rose-400" />
+            <p className="text-xs text-muted-foreground">Failed to load telemetry — {error}</p>
+            <Button variant="outline" size="sm" className="h-7 gap-1 text-[11px]" onClick={fetchTelemetry}>
+              <RotateCw className="h-3 w-3" /> Retry
+            </Button>
+          </div>
+        ) : !points || points.length === 0 ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-6 text-center">
+            <Activity className="h-5 w-5 text-muted-foreground" />
+            <p className="text-xs text-muted-foreground">No telemetry history for this device in the last 24h.</p>
+          </div>
+        ) : (
+          <TelemetryMetrics points={points} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TelemetryMetrics({ points }: { points: TelemetryPoint[] }) {
+  // Group points by metric, then take the top 6 metrics by point count.
+  const metrics = useMemo(() => {
+    const byMetric = new Map<string, TelemetryPoint[]>()
+    for (const p of points) {
+      const arr = byMetric.get(p.metric) || []
+      arr.push(p)
+      byMetric.set(p.metric, arr)
+    }
+    const entries = Array.from(byMetric.entries())
+      .map(([metric, pts]) => {
+        const values = pts.map(p => p.value).filter(v => Number.isFinite(v))
+        const latest = values.length ? values[values.length - 1] : NaN
+        const min = values.length ? Math.min(...values) : NaN
+        const max = values.length ? Math.max(...values) : NaN
+        const unit = pts.find(p => p.unit)?.unit || ''
+        return { metric, pts, values, latest, min, max, unit }
+      })
+      .sort((a, b) => b.pts.length - a.pts.length)
+      .slice(0, 6)
+    return entries
+  }, [points])
+
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      {metrics.map((m, i) => {
+        const color = SPARK_COLORS[i % SPARK_COLORS.length]
+        const rangeText = Number.isFinite(m.min) && Number.isFinite(m.max)
+          ? `${m.min.toFixed(1)} – ${m.max.toFixed(1)}`
+          : '—'
+        return (
+          <div key={m.metric} className="rounded-md border border-border/50 bg-background/40 p-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-medium capitalize text-foreground">{m.metric}</span>
+              <span className="text-[10px] text-muted-foreground">
+                {m.pts.length} pts · {rangeText} {m.unit}
+              </span>
+            </div>
+            <div className="mt-1 flex items-end justify-between gap-2">
+              <div>
+                <p className="text-lg font-bold tnum">
+                  {Number.isFinite(m.latest) ? m.latest.toFixed(1) : '—'}
+                  <span className="ml-1 text-[10px] font-normal text-muted-foreground">{m.unit}</span>
+                </p>
+                <p className="text-[10px] text-muted-foreground">latest value</p>
+              </div>
+              <div className="h-9 w-28">
+                <Sparkline data={m.values.length ? m.values : [0, 0]} color={color} height={36} />
+              </div>
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

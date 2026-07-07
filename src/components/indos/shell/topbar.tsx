@@ -83,8 +83,36 @@ export function Topbar() {
       <div className="flex min-w-0 items-center gap-2">
         <CircuitBoard className="h-4 w-4 text-primary lg:hidden" />
         <h2 className="truncate text-sm font-semibold sm:text-base">{VIEW_TITLES[view]}</h2>
-        <Badge variant="outline" className="hidden items-center gap-1 border-emerald-500/30 bg-emerald-500/10 text-emerald-400 sm:inline-flex">
-          <LiveDot color="bg-emerald-400" /> LIVE
+        <Badge
+          variant="outline"
+          className={cn(
+            'inline-flex items-center gap-1',
+            rt.connected
+              ? rt.isStale
+                ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
+                : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+              : 'border-rose-500/40 bg-rose-500/10 text-rose-400',
+          )}
+        >
+          {rt.connected ? (
+            rt.isStale ? (
+              <>
+                <LiveDot color="bg-amber-400" /> STALE
+              </>
+            ) : (
+              <>
+                <LiveDot color="bg-emerald-400" /> LIVE
+              </>
+            )
+          ) : (
+            <>
+              <span className="relative inline-flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-400 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-rose-400" />
+              </span>
+              CONN
+            </>
+          )}
         </Badge>
       </div>
 
@@ -101,8 +129,29 @@ export function Topbar() {
 
         {/* Live system mini-stats */}
         <TooltipProvider delayDuration={150}>
-          <div className="hidden items-center gap-1 rounded-md border border-border bg-card/60 px-2 py-1 xl:flex">
-            <MiniStat icon={Wifi} value={rt.connected ? 'LIVE' : 'CONN'} good={rt.connected} tip="Realtime telemetry stream" />
+          <div
+            className={cn(
+              'hidden items-center gap-1 rounded-md border bg-card/60 px-2 py-1 sm:flex',
+              rt.connected
+                ? rt.isStale
+                  ? 'border-amber-500/40 ring-1 ring-amber-500/30'
+                  : 'border-border'
+                : 'border-rose-500/50 ring-1 ring-rose-500/40',
+            )}
+          >
+            <MiniStat
+              icon={Wifi}
+              value={rt.connected ? (rt.isStale ? 'STALE' : 'LIVE') : 'CONN'}
+              good={rt.connected && !rt.isStale}
+              stale={rt.connected && rt.isStale}
+              tip={
+                rt.connected
+                  ? rt.isStale
+                    ? 'Connected but no data received for >60s — values may be stale'
+                    : 'Realtime telemetry stream'
+                  : 'Telemetry socket disconnected — data shown is stale'
+              }
+            />
             <span className="h-3 w-px bg-border" />
             <MiniStat icon={Zap} value={sys ? `${sys.mqttThroughput}/s` : '—'} tip="MQTT throughput" />
             <span className="h-3 w-px bg-border" />
@@ -201,13 +250,18 @@ function UserMenu() {
   )
 }
 
-function MiniStat({ icon: Icon, value, good, tip }: { icon: any; value: string; good?: boolean; tip: string }) {
+function MiniStat({ icon: Icon, value, good, stale, tip }: { icon: any; value: string; good?: boolean; stale?: boolean; tip: string }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <div className="flex items-center gap-1 px-1 text-[11px] font-medium">
-          <Icon className={cn('h-3 w-3', good ? 'text-emerald-400' : 'text-muted-foreground')} />
-          <span className="tnum text-foreground/80">{value}</span>
+          <Icon
+            className={cn(
+              'h-3 w-3',
+              good ? 'text-emerald-400' : stale ? 'text-amber-400' : 'text-muted-foreground',
+            )}
+          />
+          <span className={cn('tnum', stale ? 'text-amber-400' : 'text-foreground/80')}>{value}</span>
         </div>
       </TooltipTrigger>
       <TooltipContent side="bottom">{tip}</TooltipContent>

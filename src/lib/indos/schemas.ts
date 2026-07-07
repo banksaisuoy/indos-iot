@@ -18,6 +18,28 @@ export const alarmPatchSchema = z.object({
   ackedBy: z.string().max(120).optional(),
 })
 
+/**
+ * PHASE 12-C — Bulk alarm acknowledge.
+ *
+ * At least one of `ids` (non-empty array) OR `severity` OR `all===true` must
+ * be provided. The "at-least-one" rule is enforced in the route handler so we
+ * can return a clean 400 `NO_TARGET` (zod would surface as 422 VALIDATION_ERROR
+ * which is less actionable for callers). The schema here only normalizes types.
+ *
+ * - `ids`      → acknowledge a specific set of alarm ids (e.g. multi-select).
+ * - `severity` → acknowledge every active alarm with that severity (org-scoped).
+ * - `all`      → acknowledge every active alarm visible to the caller (org-scoped).
+ *
+ * `ids` takes precedence when provided; otherwise `severity`; otherwise `all`.
+ * The handler always intersects with `state: 'active'` so already-acked or
+ * resolved alarms are silently skipped (idempotent).
+ */
+export const bulkAckSchema = z.object({
+  ids: z.array(z.string().min(1)).optional(),
+  severity: z.enum(['critical', 'warning', 'info']).optional(),
+  all: z.boolean().optional(),
+})
+
 export const workOrderCreateSchema = z.object({
   title: z.string().min(1).max(200),
   description: z.string().max(5000).optional().nullable(),
@@ -113,4 +135,45 @@ export const otaDeploySchema = z.object({
   firmwareId: z.string().min(1),
   scope: z.enum(['single', 'group', 'project', 'global']),
   target: z.string().max(200).optional().nullable(),
+})
+
+// ─── User & Organization Management Schemas (Phase 12-B) ────────────
+// Used by POST /api/indos/users, PATCH /api/indos/users/[id], POST /api/indos/orgs.
+// These power the previously-fake "Invite User" and "New Organization" dialogs.
+export const userCreateSchema = z.object({
+  name: z.string().min(1).max(200),
+  email: z.string().email().max(200).transform((s) => s.toLowerCase()),
+  password: z.string().min(8).max(200),
+  role: z.enum(['admin', 'engineer', 'operator', 'viewer']),
+  // empty string → null (platform-level user). The dialog sends "" for "— No org —".
+  orgId: z.string().optional().nullable().transform((s) => (s && s.trim() ? s : null)),
+})
+
+// NOTE on orgId: we intentionally do NOT use `.transform()` here (unlike
+// userCreateSchema). A transform would convert the *missing* field to `null`,
+// which would make the route handler's `if (orgId !== undefined)` check pass
+// and unintentionally clear the user's org on every PATCH that doesn't include
+// orgId (e.g. "Disable", "Reset password", "Change role"). Without the
+// transform, a missing key stays `undefined` (and is even omitted from the
+// parsed object), so the handler correctly skips it. Empty-string→null
+// normalization is handled in the route handler defensively.
+export const userUpdateSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  role: z.enum(['admin', 'engineer', 'operator', 'viewer']).optional(),
+  status: z.enum(['active', 'disabled']).optional(),
+  password: z.string().min(8).max(200).optional(),
+  // null means "remove from org → platform-level". empty string is normalized in the route.
+  orgId: z.string().max(200).optional().nullable(),
+}).refine(
+  // At least one field must be EXPLICITLY provided (i.e. not undefined).
+  // `.optional()` leaves missing keys as `undefined`, so this correctly rejects `{}`.
+  (data) => Object.values(data).some((v) => v !== undefined),
+  { message: 'At least one field must be provided for update' },
+)
+
+export const orgCreateSchema = z.object({
+  name: z.string().min(1).max(200),
+  type: z.enum(['operator', 'customer', 'integrator']),
+  industry: z.string().max(200).optional().nullable(),
+  country: z.string().max(200).optional().nullable(),
 })

@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
+import { useSession } from 'next-auth/react'
 import { toast } from 'sonner'
 import { KpiCard } from '@/components/indos/shared/kpi-card'
 import { ViewHeader } from '@/components/indos/shared/view-header'
@@ -20,10 +21,15 @@ import {
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import {
-  Building2, Users, ShieldCheck, KeyRound, Plus, UserPlus, MapPin, Factory, Briefcase, Check, Minus,
+  Building2, Users, ShieldCheck, KeyRound, Plus, UserPlus, MapPin, Factory,
+  Check, Minus, MoreVertical, Loader2, Power, KeySquare, PencilLine,
 } from 'lucide-react'
 
 interface Org {
@@ -59,7 +65,7 @@ const ROLE_STYLE: Record<string, string> = {
   viewer: 'bg-slate-500/15 text-slate-300 ring-slate-500/30',
 }
 
-const ROLES = ['admin', 'engineer', 'operator', 'viewer']
+const ROLES = ['admin', 'engineer', 'operator', 'viewer'] as const
 const PERMISSIONS = ['View', 'Edit', 'Deploy OTA', 'Manage Users', 'Configure', 'Delete']
 // Realistic role capability matrix
 const MATRIX: Record<string, boolean[]> = {
@@ -86,23 +92,63 @@ function fmtLast(d?: string | null) {
   return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
 }
 
+function friendlyError(err: unknown, fallback: string): string {
+  let msg = fallback
+  try {
+    const r = err as { message?: string; error?: string }
+    if (r?.message) msg = r.message
+    else if (r?.error) msg = String(r.error).replace(/_/g, ' ').toLowerCase()
+  } catch { /* noop */ }
+  return msg
+}
+
 export function OrganizationsView() {
+  const { data: session } = useSession()
+  const isAdmin = session?.user?.role === 'admin'
+  const currentUserId = session?.user?.id
+
   const [orgs, setOrgs] = useState<Org[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
   const [roleFilter, setRoleFilter] = useState('all')
   const [search, setSearch] = useState('')
-  const [newOrgOpen, setNewOrgOpen] = useState(false)
-  const [inviteOpen, setInviteOpen] = useState(false)
 
-  useEffect(() => {
-    Promise.all([
-      fetch('/api/indos/orgs').then(r => r.json()),
-      fetch('/api/indos/users').then(r => r.json()),
-    ])
-      .then(([o, u]) => { setOrgs(o); setUsers(u); setLoading(false) })
-      .catch(() => { setLoading(false); toast.error('Failed to load organizations') })
-  }, [])
+  // Dialog state — New Org
+  const [newOrgOpen, setNewOrgOpen] = useState(false)
+  const [newOrgForm, setNewOrgForm] = useState({ name: '', type: 'operator' as 'operator' | 'customer' | 'integrator', industry: '', country: '' })
+  const [newOrgBusy, setNewOrgBusy] = useState(false)
+
+  // Dialog state — Invite User
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [inviteForm, setInviteForm] = useState({ name: '', email: '', password: '', role: 'engineer' as 'admin' | 'engineer' | 'operator' | 'viewer', orgId: '' })
+  const [inviteBusy, setInviteBusy] = useState(false)
+
+  // Dialog state — Reset Password (per-row)
+  const [resetTarget, setResetTarget] = useState<User | null>(null)
+  const [resetPw, setResetPw] = useState('')
+  const [resetBusy, setResetBusy] = useState(false)
+
+  // Dialog state — Change Role (per-row)
+  const [roleTarget, setRoleTarget] = useState<User | null>(null)
+  const [rolePick, setRolePick] = useState<'admin' | 'engineer' | 'operator' | 'viewer'>('viewer')
+  const [roleBusy, setRoleBusy] = useState(false)
+
+  const reload = async () => {
+    try {
+      const [o, u] = await Promise.all([
+        fetch('/api/indos/orgs').then(r => r.json()),
+        fetch('/api/indos/users').then(r => r.json()),
+      ])
+      setOrgs(Array.isArray(o) ? o : [])
+      setUsers(Array.isArray(u) ? u : [])
+    } catch {
+      toast.error('Failed to load organizations')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void reload() }, [])
 
   const admins = users.filter(u => u.role === 'admin').length
   const twoFAOn = users.filter(u => u.twoFA).length
@@ -116,6 +162,125 @@ export function OrganizationsView() {
       return true
     })
   }, [users, roleFilter, search])
+
+  // ── Action handlers ──────────────────────────────────────────────────
+  async function submitNewOrg() {
+    if (!newOrgForm.name.trim()) { toast.error('Organization name is required'); return }
+    setNewOrgBusy(true)
+    try {
+      const res = await fetch('/api/indos/orgs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newOrgForm.name.trim(),
+          type: newOrgForm.type,
+          industry: newOrgForm.industry.trim() || undefined,
+          country: newOrgForm.country.trim() || undefined,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw data
+      toast.success(`Organization "${data.name || newOrgForm.name}" created`)
+      setNewOrgOpen(false)
+      setNewOrgForm({ name: '', type: 'operator', industry: '', country: '' })
+      await reload()
+    } catch (e) {
+      toast.error(friendlyError(e, 'Failed to create organization'))
+    } finally {
+      setNewOrgBusy(false)
+    }
+  }
+
+  async function submitInvite() {
+    if (!inviteForm.name.trim()) { toast.error('Full name is required'); return }
+    if (!inviteForm.email.trim()) { toast.error('Email is required'); return }
+    if (inviteForm.password.length < 8) { toast.error('Password must be at least 8 characters'); return }
+    setInviteBusy(true)
+    try {
+      const res = await fetch('/api/indos/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: inviteForm.name.trim(),
+          email: inviteForm.email.trim(),
+          password: inviteForm.password,
+          role: inviteForm.role,
+          orgId: inviteForm.orgId || null,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw data
+      toast.success(`User "${data.email || inviteForm.email}" created`)
+      setInviteOpen(false)
+      setInviteForm({ name: '', email: '', password: '', role: 'engineer', orgId: '' })
+      await reload()
+    } catch (e) {
+      toast.error(friendlyError(e, 'Failed to create user'))
+    } finally {
+      setInviteBusy(false)
+    }
+  }
+
+  async function toggleUserStatus(u: User) {
+    const next = u.status === 'active' ? 'disabled' : 'active'
+    try {
+      const res = await fetch(`/api/indos/users/${u.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: next }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw data
+      toast.success(`${u.email} is now ${next}`)
+      await reload()
+    } catch (e) {
+      toast.error(friendlyError(e, `Failed to ${next === 'disabled' ? 'disable' : 'enable'} user`))
+    }
+  }
+
+  async function submitResetPassword() {
+    if (!resetTarget) return
+    if (resetPw.length < 8) { toast.error('Password must be at least 8 characters'); return }
+    setResetBusy(true)
+    try {
+      const res = await fetch(`/api/indos/users/${resetTarget.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: resetPw }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw data
+      toast.success(`Password reset for ${resetTarget.email}`)
+      setResetTarget(null)
+      setResetPw('')
+      await reload()
+    } catch (e) {
+      toast.error(friendlyError(e, 'Failed to reset password'))
+    } finally {
+      setResetBusy(false)
+    }
+  }
+
+  async function submitChangeRole() {
+    if (!roleTarget) return
+    setRoleBusy(true)
+    try {
+      const res = await fetch(`/api/indos/users/${roleTarget.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: rolePick }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw data
+      toast.success(`${roleTarget.email} is now ${rolePick}`)
+      setRoleTarget(null)
+      await reload()
+    } catch (e) {
+      toast.error(friendlyError(e, 'Failed to change role'))
+    } finally {
+      setRoleBusy(false)
+    }
+  }
 
   return (
     <div className="space-y-5 p-4 sm:p-6">
@@ -148,9 +313,13 @@ export function OrganizationsView() {
         {/* Organizations tab */}
         <TabsContent value="orgs" className="space-y-4">
           <div className="flex justify-end">
-            <Button size="sm" className="h-8 gap-1.5" onClick={() => setNewOrgOpen(true)}>
-              <Plus className="h-3.5 w-3.5" /> New Organization
-            </Button>
+            {isAdmin ? (
+              <Button size="sm" className="h-8 gap-1.5" onClick={() => setNewOrgOpen(true)}>
+                <Plus className="h-3.5 w-3.5" /> New Organization
+              </Button>
+            ) : (
+              <span className="text-xs text-muted-foreground self-center">Contact an admin to provision new tenants.</span>
+            )}
           </div>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {loading
@@ -249,9 +418,11 @@ export function OrganizationsView() {
                     {ROLES.map(r => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Button size="sm" className="h-8 gap-1.5" onClick={() => setInviteOpen(true)}>
-                  <UserPlus className="h-3.5 w-3.5" /> Invite
-                </Button>
+                {isAdmin && (
+                  <Button size="sm" className="h-8 gap-1.5" onClick={() => setInviteOpen(true)}>
+                    <UserPlus className="h-3.5 w-3.5" /> Invite
+                  </Button>
+                )}
               </div>
             </CardHeader>
             <CardContent>
@@ -265,45 +436,83 @@ export function OrganizationsView() {
                       <TableHead className="hidden text-xs sm:table-cell">2FA</TableHead>
                       <TableHead className="hidden text-xs lg:table-cell">Last login</TableHead>
                       <TableHead className="text-xs">Status</TableHead>
+                      <TableHead className="w-10 text-xs">{isAdmin ? <span className="sr-only">Actions</span> : null}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {loading
                       ? Array.from({ length: 6 }).map((_, i) => (
                         <TableRow key={i} className="border-border/40">
-                          <TableCell colSpan={6}><Skeleton className="h-6 w-full" /></TableCell>
+                          <TableCell colSpan={7}><Skeleton className="h-6 w-full" /></TableCell>
                         </TableRow>
                       ))
-                      : filteredUsers.map(u => (
-                        <TableRow key={u.id} className="border-border/40">
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Avatar className="h-7 w-7">
-                                <AvatarFallback className="bg-primary/10 text-[10px] font-semibold text-primary">{initials(u.name)}</AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <p className="text-xs font-medium leading-tight">{u.name}</p>
-                                <p className="text-[10px] text-muted-foreground">{u.email}</p>
+                      : filteredUsers.map(u => {
+                        const isSelf = !!currentUserId && u.id === currentUserId
+                        return (
+                          <TableRow key={u.id} className="border-border/40">
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <Avatar className="h-7 w-7">
+                                  <AvatarFallback className="bg-primary/10 text-[10px] font-semibold text-primary">{initials(u.name)}</AvatarFallback>
+                                </Avatar>
+                                <div>
+                                  <p className="text-xs font-medium leading-tight">{u.name}{isSelf && <span className="ml-1 text-[10px] text-muted-foreground">(you)</span>}</p>
+                                  <p className="text-[10px] text-muted-foreground">{u.email}</p>
+                                </div>
                               </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className={cn('capitalize ring-1', ROLE_STYLE[u.role] || ROLE_STYLE.viewer)}>{u.role}</Badge>
-                          </TableCell>
-                          <TableCell className="hidden text-xs md:table-cell">{u.org?.name || '—'}</TableCell>
-                          <TableCell className="hidden sm:table-cell">
-                            {u.twoFA
-                              ? <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30"><ShieldCheck className="h-3 w-3" /> On</Badge>
-                              : <Badge variant="outline" className="bg-slate-500/10 text-slate-400 ring-slate-500/30">Off</Badge>}
-                          </TableCell>
-                          <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">{fmtLast(u.lastLogin)}</TableCell>
-                          <TableCell>
-                            {u.status === 'active'
-                              ? <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30">Active</Badge>
-                              : <Badge variant="outline" className="bg-slate-500/10 text-slate-400 ring-slate-500/30">Disabled</Badge>}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className={cn('capitalize ring-1', ROLE_STYLE[u.role] || ROLE_STYLE.viewer)}>{u.role}</Badge>
+                            </TableCell>
+                            <TableCell className="hidden text-xs md:table-cell">{u.org?.name || '—'}</TableCell>
+                            <TableCell className="hidden sm:table-cell">
+                              {u.twoFA
+                                ? <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30"><ShieldCheck className="h-3 w-3" /> On</Badge>
+                                : <Badge variant="outline" className="bg-slate-500/10 text-slate-400 ring-slate-500/30">Off</Badge>}
+                            </TableCell>
+                            <TableCell className="hidden text-xs text-muted-foreground lg:table-cell">{fmtLast(u.lastLogin)}</TableCell>
+                            <TableCell>
+                              {u.status === 'active'
+                                ? <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 ring-emerald-500/30">Active</Badge>
+                                : <Badge variant="outline" className="bg-slate-500/10 text-slate-400 ring-slate-500/30">Disabled</Badge>}
+                            </TableCell>
+                            <TableCell>
+                              {isAdmin && !isSelf && (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Actions for ${u.email}`}>
+                                      <MoreVertical className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-48">
+                                    <DropdownMenuLabel className="text-xs">{u.email}</DropdownMenuLabel>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem
+                                      className="text-xs"
+                                      onSelect={(e) => { e.preventDefault(); void toggleUserStatus(u) }}
+                                    >
+                                      <Power className="h-3.5 w-3.5" />
+                                      {u.status === 'active' ? 'Disable' : 'Enable'}
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-xs"
+                                      onSelect={(e) => { e.preventDefault(); setResetPw(''); setResetTarget(u) }}
+                                    >
+                                      <KeySquare className="h-3.5 w-3.5" /> Reset password…
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-xs"
+                                      onSelect={(e) => { e.preventDefault(); setRolePick(u.role as typeof rolePick); setRoleTarget(u) }}
+                                    >
+                                      <PencilLine className="h-3.5 w-3.5" /> Change role…
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
                   </TableBody>
                 </Table>
               </ScrollArea>
@@ -312,8 +521,8 @@ export function OrganizationsView() {
         </TabsContent>
       </Tabs>
 
-      {/* New Org dialog (cosmetic) */}
-      <Dialog open={newOrgOpen} onOpenChange={setNewOrgOpen}>
+      {/* ───────── New Org dialog ───────── */}
+      <Dialog open={newOrgOpen} onOpenChange={(o) => { setNewOrgOpen(o); if (!o) setNewOrgForm({ name: '', type: 'operator', industry: '', country: '' }) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>New Organization</DialogTitle>
@@ -321,13 +530,13 @@ export function OrganizationsView() {
           </DialogHeader>
           <div className="grid gap-3">
             <div className="grid gap-1.5">
-              <Label>Organization name</Label>
-              <Input placeholder="e.g. Acme Industrial Co., Ltd." />
+              <Label htmlFor="org-name">Organization name</Label>
+              <Input id="org-name" placeholder="e.g. Acme Industrial Co., Ltd." value={newOrgForm.name} onChange={(e) => setNewOrgForm({ ...newOrgForm, name: e.target.value })} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
                 <Label>Type</Label>
-                <Select defaultValue="operator">
+                <Select value={newOrgForm.type} onValueChange={(v) => setNewOrgForm({ ...newOrgForm, type: v as typeof newOrgForm.type })}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="operator">Operator</SelectItem>
@@ -337,42 +546,49 @@ export function OrganizationsView() {
                 </Select>
               </div>
               <div className="grid gap-1.5">
-                <Label>Industry</Label>
-                <Input placeholder="Manufacturing" />
+                <Label htmlFor="org-industry">Industry</Label>
+                <Input id="org-industry" placeholder="Manufacturing" value={newOrgForm.industry} onChange={(e) => setNewOrgForm({ ...newOrgForm, industry: e.target.value })} />
               </div>
             </div>
             <div className="grid gap-1.5">
-              <Label>Country</Label>
-              <Input placeholder="Thailand" />
+              <Label htmlFor="org-country">Country</Label>
+              <Input id="org-country" placeholder="Thailand" value={newOrgForm.country} onChange={(e) => setNewOrgForm({ ...newOrgForm, country: e.target.value })} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setNewOrgOpen(false)}>Cancel</Button>
-            <Button size="sm" onClick={() => { toast.info('Organization creation is demo-only'); setNewOrgOpen(false) }}>Create</Button>
+            <Button variant="outline" size="sm" onClick={() => setNewOrgOpen(false)} disabled={newOrgBusy}>Cancel</Button>
+            <Button size="sm" onClick={submitNewOrg} disabled={newOrgBusy}>
+              {newOrgBusy ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Creating…</> : 'Create'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Invite User dialog (cosmetic) */}
-      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+      {/* ───────── Invite User dialog ───────── */}
+      <Dialog open={inviteOpen} onOpenChange={(o) => { setInviteOpen(o); if (!o) setInviteForm({ name: '', email: '', password: '', role: 'engineer', orgId: '' }) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Invite User</DialogTitle>
-            <DialogDescription>Send an invitation email with role pre-assigned.</DialogDescription>
+            <DialogDescription>Create a new account with role pre-assigned. The user can log in immediately with the initial password.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-3">
             <div className="grid gap-1.5">
-              <Label>Email</Label>
-              <Input type="email" placeholder="engineer@acme.io" />
+              <Label htmlFor="inv-email">Email</Label>
+              <Input id="inv-email" type="email" placeholder="engineer@acme.io" value={inviteForm.email} onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })} />
             </div>
             <div className="grid gap-1.5">
-              <Label>Full name</Label>
-              <Input placeholder="Somchai Prasert" />
+              <Label htmlFor="inv-name">Full name</Label>
+              <Input id="inv-name" placeholder="Somchai Prasert" value={inviteForm.name} onChange={(e) => setInviteForm({ ...inviteForm, name: e.target.value })} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="inv-pw">Initial password</Label>
+              <Input id="inv-pw" type="password" placeholder="min. 8 characters" value={inviteForm.password} onChange={(e) => setInviteForm({ ...inviteForm, password: e.target.value })} />
+              <p className="text-[10px] text-muted-foreground">User can change after first login.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1.5">
                 <Label>Role</Label>
-                <Select defaultValue="engineer">
+                <Select value={inviteForm.role} onValueChange={(v) => setInviteForm({ ...inviteForm, role: v as typeof inviteForm.role })}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {ROLES.map(r => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}
@@ -381,9 +597,10 @@ export function OrganizationsView() {
               </div>
               <div className="grid gap-1.5">
                 <Label>Organization</Label>
-                <Select defaultValue="">
+                <Select value={inviteForm.orgId || '__none__'} onValueChange={(v) => setInviteForm({ ...inviteForm, orgId: v === '__none__' ? '' : v })}>
                   <SelectTrigger className="w-full"><SelectValue placeholder="Select…" /></SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="__none__">— No org (platform-level) —</SelectItem>
                     {orgs.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -391,9 +608,65 @@ export function OrganizationsView() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)}>Cancel</Button>
-            <Button size="sm" onClick={() => { toast.info('User invitation is demo-only'); setInviteOpen(false) }}>
-              <UserPlus className="h-3.5 w-3.5" /> Send Invite
+            <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)} disabled={inviteBusy}>Cancel</Button>
+            <Button size="sm" onClick={submitInvite} disabled={inviteBusy}>
+              {inviteBusy
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Creating…</>
+                : <><UserPlus className="h-3.5 w-3.5" /> Send Invite</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ───────── Reset Password dialog ───────── */}
+      <Dialog open={!!resetTarget} onOpenChange={(o) => { if (!o) { setResetTarget(null); setResetPw('') } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reset password</DialogTitle>
+            <DialogDescription>
+              {resetTarget ? `Set a new password for ${resetTarget.email}. They will need to use it on next sign-in.` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor="reset-pw">New password</Label>
+            <Input id="reset-pw" type="password" placeholder="min. 8 characters" value={resetPw} onChange={(e) => setResetPw(e.target.value)} />
+            <p className="text-[10px] text-muted-foreground">Password is hashed with bcrypt before storage.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => { setResetTarget(null); setResetPw('') }} disabled={resetBusy}>Cancel</Button>
+            <Button size="sm" onClick={submitResetPassword} disabled={resetBusy}>
+              {resetBusy
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</>
+                : <><KeySquare className="h-3.5 w-3.5" /> Reset password</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ───────── Change Role dialog ───────── */}
+      <Dialog open={!!roleTarget} onOpenChange={(o) => { if (!o) setRoleTarget(null) }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Change role</DialogTitle>
+            <DialogDescription>
+              {roleTarget ? `Select a new role for ${roleTarget.email}.` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label>New role</Label>
+            <Select value={rolePick} onValueChange={(v) => setRolePick(v as typeof rolePick)}>
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {ROLES.map(r => <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setRoleTarget(null)} disabled={roleBusy}>Cancel</Button>
+            <Button size="sm" onClick={submitChangeRole} disabled={roleBusy}>
+              {roleBusy
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</>
+                : 'Apply'}
             </Button>
           </DialogFooter>
         </DialogContent>
