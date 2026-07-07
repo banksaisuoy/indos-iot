@@ -3,15 +3,18 @@ import { db } from '@/lib/db'
 import { withErrorHandler } from '@/lib/api'
 import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
 import { parsePaginationParams, cursorPaginate } from '@/lib/pagination'
+import { scopedProjectFilter } from '@/lib/org-scope'
 
 // GET: List devices (any authenticated user) — supports cursor pagination
-export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async (req: NextRequest) => {
+// P0.1: scoped to the caller's org via project.orgId (nested).
+// Admins / platform users (null orgId) see everything.
+export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async (req: NextRequest, session) => {
   const { searchParams } = new URL(req.url)
   const project = searchParams.get('project')
   const type = searchParams.get('type')
   const status = searchParams.get('status')
   const where = {
-    ...(project && project !== 'all' ? { project: { slug: project } } : {}),
+    ...scopedProjectFilter(session, project),   // merges orgId + slug into ONE project: {...} key
     ...(type && type !== 'all' ? { type } : {}),
     ...(status && status !== 'all' ? { status } : {}),
   }

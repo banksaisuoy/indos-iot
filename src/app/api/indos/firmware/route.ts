@@ -7,6 +7,10 @@ import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
 import { parsePaginationParams, cursorPaginate } from '@/lib/pagination'
 
 // GET: List firmware catalog (any authenticated user) — supports cursor pagination
+// PLATFORM-LEVEL: firmware is shared across orgs (binary catalog + signing metadata).
+// Org-scoped users can view firmware (read-only) but deploying (POST /api/indos/ota)
+// is restricted by RBAC to admin/engineer.
+// TODO (P1 follow-up): consider per-org firmware visibility when minio upload lands.
 export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async (req) => {
   const { cursor, limit, paginated } = parsePaginationParams(req)
 

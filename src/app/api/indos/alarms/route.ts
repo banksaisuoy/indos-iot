@@ -4,13 +4,17 @@ import { withErrorHandler, validateBody } from '@/lib/api'
 import { alarmPatchSchema } from '@/lib/indos/schemas'
 import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
 import { parsePaginationParams, cursorPaginate } from '@/lib/pagination'
+import { scopedProjectFilter } from '@/lib/org-scope'
 
 // GET: List alarms (any authenticated user) — supports cursor pagination
-export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async (req: NextRequest) => {
+// P0.1: scoped via project.orgId (nested). Admins / platform users see everything.
+export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async (req: NextRequest, session) => {
   const { searchParams } = new URL(req.url)
   const state = searchParams.get('state')
   const severity = searchParams.get('severity')
+  const project = searchParams.get('project')
   const where = {
+    ...scopedProjectFilter(session, project),
     ...(state && state !== 'all' ? { state } : {}),
     ...(severity && severity !== 'all' ? { severity } : {}),
   }

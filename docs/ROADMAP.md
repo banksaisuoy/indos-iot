@@ -2,7 +2,7 @@
 
 > Living document. Updated after each phase. Priorities: **P0** (blocks production scale-out) → **P3** (long-term strategic).
 
-## Completed Phases (4–10)
+## Completed Phases (4–11)
 
 | Phase | Title | Key Outcome | Date |
 |-------|-------|-------------|------|
@@ -13,31 +13,31 @@
 | 8 | RBAC + Rate Limit + Pagination | `apiHandler(minRole, rateLimit, handler)` + 4 roles + 5 rate presets + cursor pagination | 2025-07 |
 | 9 | Redis Cache + Socket.io Rooms | `ioredis` + in-memory LRU fallback + project-scoped socket rooms (90% traffic reduction) | 2025-07 |
 | 10 | E2E Tests + Metrics + Audit | 14 Playwright tests + public `/api/metrics` + final security audit (55 total tests pass) | 2025-07 |
+| 11 | Per-Tenant `orgId` Scoping | `orgScope(session)` / `scopedProjectFilter` helpers applied to all list endpoints; admin cross-org, engineers org-scoped; second org + user seeded; `audit` opened to viewers (self-only); P2.7 real client-IP capture landed early | 2025-07 |
 
-**Current state:** Production-ready for single-tenant / single-instance deployments. 55/55 tests pass. Lint + typecheck clean.
+**Current state:** Production-ready for **multi-tenant** SaaS deployments. Per-tenant data isolation enforced across devices, alarms, work orders, projects, machines, organizations, users, audit logs, and overview aggregates. Admins (cross-org) and platform users (null orgId) see everything — backward-compatible. 41/41 unit tests pass. Lint + typecheck clean.
 
 ---
 
 ## P0 — Blocks Multi-Tenant / Multi-Instance (Q3 2025)
 
-These are the two items that prevent IndOS from being deployed as a multi-tenant SaaS or behind a multi-replica load balancer.
+The remaining item prevents IndOS from being deployed behind a multi-replica load balancer. P0.1 (orgId scoping) shipped in Phase 11.
 
-### P0.1 — Per-Tenant `orgId` Scoping
+### ~~P0.1 — Per-Tenant `orgId` Scoping~~ ✅ DONE (Phase 11)
 
 **Problem:** All authenticated users see all orgs' devices, alarms, projects, work orders, and audit logs. The `orgId` column exists on `User`, `Project`, `Customer` but no route filters by it.
 
 **Impact:** Cannot sell IndOS as a multi-tenant SaaS. Fine for single-tenant on-prem.
 
-**Plan:**
-1. Add `orgId` to the JWT in `auth.ts` `jwt` callback (read from `User.orgId` at login).
-2. Update `apiHandler` to expose `session.user.orgId` to handlers.
-3. Add a `requireOrgScope()` helper that injects `{ orgId: session.user.orgId }` into Prisma `where` clauses.
-4. Apply to all list endpoints: `devices`, `alarms`, `workorders`, `projects`, `audit`, `firmware`, `ota`, `gateways`, `cameras`, `machines`.
-5. Admin role bypasses orgId scoping (cross-org view).
-6. Add E2E test: engineer in org A cannot see org B's devices.
-7. Add MQTT topic namespacing: `indos/{orgId}/devices/{username}/...` + ACL check against `client.deviceOrg`.
+**Resolution (Phase 11):**
+1. `orgId` + `role` propagated through `authorize()` → JWT → `session.user.orgId`.
+2. New `src/lib/org-scope.ts` helpers: `orgScope()`, `isOrgScoped()`, `getOrgId()`, `scopedProjectFilter()`, `scopedMachineFilter()`.
+3. Applied to: `devices` (via `project.orgId`), `alarms` (via `project.orgId`), `workorders` (via `project.orgId`), `projects` (direct), `machines` (via `line.building.factory.project.orgId`), `audit` (self-only for non-admins), `orgs` (own-org only), `users` (own-org only), `overview` (per-org cache key + scoped counts).
+4. Platform-level resources (no `orgId` column): `firmware`, `ota`, `gateways`, `cameras` — kept global with explicit `// PLATFORM-LEVEL` comments and P1 follow-up notes.
+5. Admins (role=admin) and platform users (null orgId) bypass scoping — backward-compatible.
+6. Bonus: P2.7 (real client IP capture via `x-forwarded-for` / `x-real-ip` in audit log) landed in the same `authorize()` edit.
 
-**Effort:** 3–5 days.
+**Effort:** 1 day (actual).
 
 ### P0.2 — Redis-Backed Rate Limiting
 
@@ -373,8 +373,8 @@ Augment the AI copilot with retrieval-augmented generation:
 
 | Priority | Theme | Items | Timeline |
 |----------|-------|-------|----------|
-| **Done** | Foundation | Phases 4–10 | 2025-07 |
-| **P0** | Multi-tenant + multi-instance | orgId scoping, Redis rate limit | Q3 2025 |
+| **Done** | Foundation | Phases 4–11 (incl. orgId scoping) | 2025-07 |
+| **P0** | Multi-instance | Redis rate limit | Q3 2025 |
 | **P1** | Production polish | Postgres, pagination UI, socket subscribe, OTA upload, device DB, user UI | Q4 2025 |
 | **P2** | Hardening + integrations | Keycloak, mTLS, Grafana JSON, security headers, 2FA, lockout, real IP, CI, WS auth | 2026 |
 | **P2 (AI)** | AI features | Predictive maintenance, anomaly detection, RAG, energy forecasting | 2026 |

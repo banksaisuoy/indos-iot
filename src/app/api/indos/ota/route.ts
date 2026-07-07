@@ -6,6 +6,10 @@ import { apiHandler, RATE_LIMITS } from '@/lib/api-handler'
 import { parsePaginationParams, cursorPaginate } from '@/lib/pagination'
 
 // GET: List OTA jobs (any authenticated user) — supports cursor pagination
+// PLATFORM-LEVEL: OtaJob has no orgId; jobs are scoped by firmware which is itself
+// platform-shared. Visibility = all orgs (read-only for org-scoped users).
+// Deploying (POST) is restricted by RBAC to admin/engineer.
+// TODO (P1 follow-up): filter by devices in org when per-org device ownership lands.
 export const GET = withErrorHandler(apiHandler('viewer', RATE_LIMITS.read, async (req) => {
   const { cursor, limit, paginated } = parsePaginationParams(req)
 

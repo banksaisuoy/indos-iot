@@ -1,33 +1,86 @@
 // IndOS minimal seed — just enough to start using the platform
 // Run: bun run prisma/seed.ts
+//
+// P0.1 (Phase 11) additions:
+//   - Second organization "Acme Industries" + second project + 3 devices
+//   - Second user `engineer@acme.io` (engineer role, org-scoped to Acme)
+//   - Admin user remains orgId=null (platform-level / cross-org by design)
+//   - First org renamed "IndOS Demo" (id stable: org-default)
+// All operations are idempotent (upsert). Re-running is safe.
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
 const db = new PrismaClient()
 
 async function main() {
-  console.log('🌱 Seeding IndOS (minimal)...')
+  console.log('🌱 Seeding IndOS (multi-tenant)...')
 
-  // 1 admin user (change password after first login!)
+  // ─── Org 1: IndOS Demo ────────────────────────────────────────────────
+  const orgDemo = await db.organization.upsert({
+    where: { id: 'org-default' },
+    update: { name: 'IndOS Demo' }, // rename "My Organization" → "IndOS Demo"
+    create: {
+      id: 'org-default',
+      name: 'IndOS Demo',
+      type: 'operator',
+      industry: 'Manufacturing',
+      country: 'Thailand',
+    },
+  })
+  console.log(`  ✅ Org 1: ${orgDemo.name} (${orgDemo.id})`)
+
+  // ─── Org 2: Acme Industries (NEW in Phase 11) ─────────────────────────
+  const orgAcme = await db.organization.upsert({
+    where: { id: 'org-acme' },
+    update: {},
+    create: {
+      id: 'org-acme',
+      name: 'Acme Industries',
+      type: 'operator',
+      industry: 'Heavy Industry',
+      country: 'Singapore',
+    },
+  })
+  console.log(`  ✅ Org 2: ${orgAcme.name} (${orgAcme.id})`)
+
+  // ─── Admin user — platform-level (orgId = null, cross-org by design) ──
+  // RECOMMENDED: keep admin's orgId null so admin sees ALL orgs.
+  // To restrict an admin to one org, set orgId explicitly (defensive option).
   const passwordHash = bcrypt.hashSync('indos123', 10)
   const admin = await db.user.upsert({
     where: { email: 'admin@indos.io' },
-    update: {},
-    create: { email: 'admin@indos.io', name: 'Admin', role: 'admin', password: passwordHash, status: 'active' },
+    update: { orgId: null }, // force platform-level on re-seed
+    create: {
+      email: 'admin@indos.io',
+      name: 'Admin',
+      role: 'admin',
+      password: passwordHash,
+      status: 'active',
+      orgId: null, // platform-level (cross-org)
+    },
   })
-  console.log(`  ✅ Admin user: ${admin.email} / indos123 (CHANGE PASSWORD AFTER LOGIN!)`)
+  console.log(`  ✅ Admin user: ${admin.email} / indos123 (orgId: null = platform-level)`)
 
-  // 1 organization
-  const org = await db.organization.upsert({
-    where: { id: 'org-default' },
-    update: {},
-    create: { id: 'org-default', name: 'My Organization', type: 'operator', industry: 'Manufacturing', country: 'Thailand' },
+  // ─── Engineer user scoped to Acme Industries (NEW in Phase 11) ────────
+  const acmePasswordHash = bcrypt.hashSync('acme123', 10)
+  const acmeEngineer = await db.user.upsert({
+    where: { email: 'engineer@acme.io' },
+    update: { orgId: orgAcme.id, role: 'engineer', status: 'active', password: acmePasswordHash },
+    create: {
+      email: 'engineer@acme.io',
+      name: 'Acme Engineer',
+      role: 'engineer',
+      password: acmePasswordHash,
+      status: 'active',
+      orgId: orgAcme.id,
+    },
   })
+  console.log(`  ✅ Acme engineer: ${acmeEngineer.email} / acme123 (orgId: ${orgAcme.id})`)
 
-  // 1 demo project
+  // ─── Demo project (under IndOS Demo) ──────────────────────────────────
   const project = await db.project.upsert({
     where: { slug: 'demo-factory' },
-    update: {},
+    update: { orgId: orgDemo.id },
     create: {
       name: 'Demo Factory',
       slug: 'demo-factory',
@@ -36,12 +89,29 @@ async function main() {
       location: 'Bangkok, TH',
       lat: 13.7563,
       lng: 100.5018,
-      orgId: org.id,
+      orgId: orgDemo.id,
     },
   })
-  console.log(`  ✅ Project: ${project.name}`)
+  console.log(`  ✅ Project 1: ${project.name} (org: ${orgDemo.name})`)
 
-  // 5 demo devices
+  // ─── Acme project (under Acme Industries — NEW in Phase 11) ───────────
+  const acmeProject = await db.project.upsert({
+    where: { slug: 'acme-plant-a' },
+    update: { orgId: orgAcme.id },
+    create: {
+      name: 'Acme Plant A',
+      slug: 'acme-plant-a',
+      category: 'factory',
+      status: 'active',
+      location: 'Singapore, SG',
+      lat: 1.3521,
+      lng: 103.8198,
+      orgId: orgAcme.id,
+    },
+  })
+  console.log(`  ✅ Project 2: ${acmeProject.name} (org: ${orgAcme.name})`)
+
+  // ─── 5 demo devices under Demo Factory ────────────────────────────────
   const deviceTypes = [
     { type: 'sensor', protocol: 'mqtt', metric: 'temperature', unit: '°C' },
     { type: 'sensor', protocol: 'mqtt', metric: 'humidity', unit: '%' },
@@ -53,7 +123,7 @@ async function main() {
     const dt = deviceTypes[i]
     await db.device.upsert({
       where: { mac: `AA:BB:CC:00:00:0${i + 1}` },
-      update: {},
+      update: { projectId: project.id },
       create: {
         name: `${dt.metric}-demo-${i + 1}`,
         mac: `AA:BB:CC:00:00:0${i + 1}`,
@@ -71,15 +141,45 @@ async function main() {
       },
     })
   }
-  console.log(`  ✅ 5 demo devices`)
+  console.log(`  ✅ 5 demo devices under ${project.name}`)
 
-  // 1 gateway
+  // ─── 3 Acme devices under Acme Plant A (NEW in Phase 11) ──────────────
+  const acmeDevices = [
+    { name: 'pressure-acme-1', mac: 'AC:ME:00:00:01', type: 'sensor', protocol: 'mqtt' },
+    { name: 'flow-acme-2', mac: 'AC:ME:00:00:02', type: 'meter', protocol: 'modbus-tcp' },
+    { name: 'valve-acme-3', mac: 'AC:ME:00:00:03', type: 'relay', protocol: 'mqtt' },
+  ]
+  for (let i = 0; i < acmeDevices.length; i++) {
+    const d = acmeDevices[i]
+    await db.device.upsert({
+      where: { mac: d.mac },
+      update: { projectId: acmeProject.id },
+      create: {
+        name: d.name,
+        mac: d.mac,
+        type: d.type,
+        protocol: d.protocol,
+        firmware: 'v1.2.0',
+        ip: `10.30.0.${i + 10}`,
+        projectId: acmeProject.id,
+        status: 'online',
+        cpu: 25 + i * 4,
+        memory: 40 + i * 4,
+        temperature: 38 + i * 2,
+        signal: 75 - i * 5,
+        lastSeen: new Date(),
+      },
+    })
+  }
+  console.log(`  ✅ 3 Acme devices under ${acmeProject.name}`)
+
+  // ─── 1 gateway (platform-level — Gateway has no orgId) ────────────────
   await db.gateway.upsert({
     where: { mac: 'GW:01:AA:BB:CC:01' },
     update: {},
     create: { name: 'GW-DEMO-01', mac: 'GW:01:AA:BB:CC:01', model: 'IndoS-GW-Pro', firmware: 'v1.0.0', ip: '10.20.0.1', status: 'online', deviceCount: 5, uptime: 99.9, location: 'Demo Factory' },
   })
-  console.log(`  ✅ 1 gateway`)
+  console.log(`  ✅ 1 gateway (platform-level)`)
 
   // Platform settings
   const settings = [
@@ -101,15 +201,20 @@ async function main() {
   }
   console.log(`  ✅ ${settings.length} settings`)
 
-  // 1 firmware version (signed)
-  // Note: OTA signing keys must be generated first: bun run scripts/generate-ota-keys.ts
+  // ─── Verification summary ─────────────────────────────────────────────
+  const orgCount = await db.organization.count()
+  const projectCount = await db.project.count()
+  const userCount = await db.user.count()
+  const deviceCount = await db.device.count()
+  console.log('')
+  console.log(`📊 DB state: ${orgCount} orgs, ${projectCount} projects, ${userCount} users, ${deviceCount} devices`)
   console.log('')
   console.log('📋 Next steps:')
   console.log('  1. Start dev: bun run dev')
   console.log('  2. Start telemetry: cd mini-services/telemetry && bun run dev')
   console.log('  3. Open: http://localhost:3000')
-  console.log('  4. Login: admin@indos.io / indos123')
-  console.log('  5. CHANGE PASSWORD after first login!')
+  console.log('  4. Login as admin (cross-org): admin@indos.io / indos123')
+  console.log('  5. Login as Acme engineer (org-scoped): engineer@acme.io / acme123')
   console.log('  6. Generate OTA keys: bun run scripts/generate-ota-keys.ts')
   console.log('')
   console.log('✅ Seed complete.')

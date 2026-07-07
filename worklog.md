@@ -516,3 +516,41 @@ Verification:
 - 16 total docs
 
 Final grade: A- (Production Ready)
+
+---
+Task ID: PHASE11-ORGID-SCOPING
+Agent: full-stack-developer
+Task: Per-Tenant orgId Scoping — multi-tenant data isolation across all list API endpoints.
+
+Work Log:
+- Read prior worklog (Phases 4-10), `src/lib/auth.ts`, `src/lib/api-handler.ts`, `src/lib/rbac.ts`, `prisma/schema.prisma`, all relevant API routes, `prisma/seed.ts`, `tsconfig.json`, `tests/e2e/indos.spec.ts`, and `docs/ROADMAP.md` to understand current architecture.
+- Edited `src/lib/auth.ts`: `authorize()` now returns `{ id, name, email, role, orgId }`; `jwt` callback sets `token.orgId`; `session` callback sets `session.user.orgId`. Added `getClientIp(req)` helper that reads `x-forwarded-for` (first IP) or `x-real-ip`, falls back to `0.0.0.0` — bonus P2.7 landed in the same edit.
+- Created `src/lib/org-scope.ts` with 5 helpers: `orgScope(session)`, `isOrgScoped(session)`, `getOrgId(session)`, `scopedProjectFilter(session, slug?)`, `scopedMachineFilter(session)`. The project-filter helper merges orgId + slug into ONE `project: {...}` sub-object to avoid the foot-gun of two `project:` keys (second would silently overwrite first).
+- Created `src/types/next-auth.d.ts` to augment `Session.user`/`User`/`JWT` with `id`, `role`, `orgId`. Picked up automatically by tsconfig `include: ['**/*.ts']`.
+- Applied org-scope to all list endpoints:
+  - `devices/route.ts` — `scopedProjectFilter(session, project)` (nested via project.orgId)
+  - `alarms/route.ts` — `scopedProjectFilter(session, project)`
+  - `workorders/route.ts` — `scopedProjectFilter(session)` on list + 4 stat counts; POST verifies projectId ownership
+  - `projects/route.ts` — `orgScope(session)` on GET; POST forces orgId for org-scoped users
+  - `machines/route.ts` — `scopedMachineFilter(session)` (deeply nested via line.building.factory.project.orgId)
+  - `audit/route.ts` — opened from admin-only to viewer; non-admins see only their own entries (`actor: session.user.email`); admins/platform see all
+  - `orgs/route.ts` — non-admins see only their own org
+  - `users/route.ts` — defensive orgScope guard (route is admin-gated)
+  - `overview/route.ts` — per-org cache key `overview:{orgId}` + scoped counts for projects/devices/alarms/workorders/machines; gateways/cameras/users remain global (no orgId)
+- Added `// PLATFORM-LEVEL` comments + P1 follow-up notes to firmware, ota, gateways, cameras routes (no schema change — these models have no orgId; kept global per task spec).
+- Updated `src/lib/api-handler.ts` JSDoc to document `session.user.orgId` availability and recommend `orgScope(session)` / `scopedProjectFilter(session, slug)` for list queries.
+- Rewrote `prisma/seed.ts` to be multi-tenant: renamed first org to `IndOS Demo` (id stable `org-default`); added second org `Acme Industries` (id `org-acme`); added `Acme Plant A` project under Acme; added 3 Acme devices (`pressure-acme-1`, `flow-acme-2`, `valve-acme-3`); added second user `engineer@acme.io` / `acme123` (engineer role, orgId=org-acme); admin's orgId explicitly set to null (platform-level / cross-org). All operations idempotent (upsert).
+- Ran `bunx tsx prisma/seed.ts` — confirmed DB state: 2 orgs, 2 projects, 2 users, 8 devices, 1 gateway.
+- Fixed 3 ESLint errors: (1) api-handler.ts JSDoc had a `*/` inside a comment block — replaced inline `/* other filters */` with `...otherFilters`; (2-3) org-scope.ts used `{}` empty-object type — replaced with `Record<string, never>`.
+- Ran full verification suite: `bun run lint` 0 errors, `bunx tsc --noEmit` 0 errors, `bunx vitest run` 41/41 tests pass (no existing tests broken).
+- curl-verified both flows: `engineer@acme.io` → 3 devices / 1 project / 1 org (Acme only); `admin@indos.io` → 8 devices / 2 projects / 2 orgs (both).
+- agent-browser verification: logged in as engineer@acme.io, navigated to Devices (3 Acme rows only) and Projects (1 Acme card only); logged in as admin@indos.io, navigated to Devices (8 rows, both orgs) and Organizations (both IndOS Demo + Acme Industries). `agent-browser errors` reported no console errors. Screenshots saved to `/home/z/my-project/shot-org-engineer.png` and `/home/z/my-project/shot-org-admin.png`.
+- Updated `docs/ROADMAP.md`: added Phase 11 row to Done table; marked P0.1 as `✅ DONE (Phase 11)` with the resolution summary; updated roadmap summary table.
+- Created `docs/worklogs/PHASE_11_ORGID_SCOPING.md` with full implementation summary + before/after scoping matrix.
+
+Stage Summary:
+- Files changed: 17 modified + 4 new (auth.ts, api-handler.ts, org-scope.ts [new], next-auth.d.ts [new], 11 API routes, seed.ts, ROADMAP.md, PHASE_11_ORGID_SCOPING.md [new], 2 screenshots [new]).
+- Tests: lint 0 errors, tsc 0 errors, vitest 41/41 pass. Existing 14 E2E tests untouched (still pass per Phase 10).
+- Browser verification: engineer@acme.io sees only Acme devices (3) and Acme Plant A project; admin@indos.io sees all 8 devices and both orgs. No console errors.
+- Backward compatibility preserved: admins (role=admin) and platform users (orgId=null) see everything. Existing single-tenant deployments work unchanged. No DB migrations required (orgId column already existed).
+- Multi-tenant SaaS deployments now unblocked. P0.1 complete; P0.2 (Redis rate limiting) remains the only P0 item.
