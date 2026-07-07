@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import { useRealtime } from '@/lib/indos/realtime'
 import { useIndOS } from '@/lib/indos/store'
+import { decideAckOutcome } from '@/lib/indos/ack-outcome'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import { AlertOctagon, CheckCheck, X, ArrowRight } from 'lucide-react'
@@ -54,42 +55,47 @@ export function CriticalAlarmBanner() {
 
   if (!visible || !latest) return null
 
-  const handleAckAll = () => {
+  const handleAckAll = async () => {
     const ids = criticalActive.map((a) => a.id)
-    const count = ids.length
-    // Always ack the live (in-memory) alarms so the banner disappears
-    // immediately even if the DB endpoint isn't shipped yet.
-    for (const id of ids) ackAlarm(id)
+    const liveCount = ids.length
 
-    // Defensively call the bulk-ack endpoint owned by agent PHASE12-C.
-    // If it 404s (endpoint not yet shipped) or the network blips, we still
-    // acked the live alarms above. Never throws.
-    fetch('/api/indos/alarms/bulk-ack', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ severity: 'critical', all: true }),
-    })
-      .then((r) => {
-        if (r.ok) {
-          toast.success(`Acknowledged ${count} live critical alarm${count === 1 ? '' : 's'}`, {
-            description: 'Bulk ack confirmed by server.',
-          })
-        } else if (r.status === 404) {
-          toast.info(`Acked ${count} live critical alarm${count === 1 ? '' : 's'} (DB alarms will be available shortly)`, {
-            description: 'Server bulk-ack endpoint is coming online — live alarms were still acknowledged.',
-          })
-        } else {
-          toast.info(`Acked ${count} live critical alarm${count === 1 ? '' : 's'} (DB alarms will be available shortly)`)
-        }
+    // Phase 13 fix: do NOT dismiss the banner or ack live alarms until the
+    // server CONFIRMS the bulk-ack succeeded. Previously `setDismissedAt` +
+    // `ackAlarm` ran before the fetch resolved, hiding the banner even on
+    // server failure — silently suppressing active critical alarms.
+    // See src/lib/indos/ack-outcome.ts for the operator-safety contract.
+    let httpStatus: number | null = null
+    try {
+      const res = await fetch('/api/indos/alarms/bulk-ack', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ severity: 'critical', all: true }),
       })
-      .catch(() => {
-        toast.info(`Acked ${count} live critical alarm${count === 1 ? '' : 's'} (DB alarms will be available shortly)`)
-      })
+      httpStatus = res.status
+    } catch {
+      httpStatus = null // network error / fetch threw
+    }
 
-    // Optimistically clear the banner — the alarm-update socket events will
-    // arrive in a moment and confirm. The dismiss gate prevents re-show
-    // until a NEW critical alarm arrives.
-    setDismissedAt(Date.now())
+    const outcome = decideAckOutcome(httpStatus, liveCount)
+
+    // Only touch live state when the server confirmed success.
+    if (outcome.ackLive) {
+      for (const id of ids) ackAlarm(id)
+    }
+    if (outcome.dismiss) {
+      setDismissedAt(Date.now())
+    }
+
+    // Surface the result. On failure the banner STAYS VISIBLE (no dismiss)
+    // and the live alarms STAY ACTIVE (no ack) — the operator sees both the
+    // banner and the error toast and can retry.
+    if (outcome.toast.type === 'success') {
+      toast.success(outcome.toast.message, { description: outcome.toast.description })
+    } else if (outcome.toast.type === 'error') {
+      toast.error(outcome.toast.message, { description: outcome.toast.description })
+    } else {
+      toast.info(outcome.toast.message, { description: outcome.toast.description })
+    }
   }
 
   const handleDismiss = () => setDismissedAt(Date.now())

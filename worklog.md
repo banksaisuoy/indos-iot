@@ -719,3 +719,41 @@ Stage Summary:
 - Safety rails proven in browser: admin cannot disable self (button hidden, but the API also returns `CANNOT_DISABLE_SELF` 400 as a defense-in-depth), and the last admin cannot be demoted or disabled (`LAST_ADMIN` 400 — covered by unit-test-validated schema logic, not separately browser-tested because the seeded admin is the only admin).
 - Test data left in DB: `field.test@indos.io` user (engineer, Acme Industries, Active, password `test12345`) and `Test Tenant Co` org (customer, Logistics, Thailand). These are referenced in the screenshots and serve as proof of the work; downstream agents can delete them via SQL if they interfere.
 - No deviations from the spec. All 5 mandated file edits done, all 6 browser verification scenarios passed, all 3 screenshots captured, all 4 verification commands (lint, tsc, vitest, browser) clean.
+
+---
+Task ID: PHASE13-PRODUCTION-READINESS-DRILL
+Agent: orchestrator (main)
+Task: Final production readiness drill + failure-scenario analysis for pilot deployment. No new features; fix only verified production risks; add minimal tests for high-risk gaps.
+
+Work Log:
+- Deployment context audit: .env (only DATABASE_URL set; no NEXTAUTH_SECRET, no OTA keys, no .env.example), Dockerfile (multi-stage, non-root, healthcheck via /api/health), docker-compose (postgres+redis+influx+mosquitto+minio+grafana+keycloak+ollama+qdrant+caddy+backup), Caddyfile (gateway :81 with XTransformPort=3030 WS routing), next.config.ts (standalone output, CSP frame-ancestors, security headers), middleware (NextAuth gate, public routes: login/auth/health/metrics), health route (DB ping → 200/503).
+- Failure-scenario analysis across 13 scenarios (WS disconnect, API timeout, DB down, telemetry 500, alarm fail, bulk-ack fail, CSV empty, CSV large, stale device, session expiry, 403, cross-org, OTA deleted device).
+- Operator-safety verification: critical banner persistence, connection escalation, stale marking, sound toggle, ack-failure visibility, CSV error UX.
+- Security regression: admin manage, engineer 403 on POST /users + POST /orgs (curl-verified), org scoping server-side (engineer sees 3 Acme devices, admin sees 8 — curl-verified), no client-side secret access, no z-ai-sdk in client bundle, OTA signing server-side only.
+- Performance smoke: dashboard load, alarms/devices bounded at 200 rows, CSV bounded, telemetry dialog lazy, WS 1Hz ticker, no unbounded memory growth (recentAlarms capped at 50, telemetry last-value-only keyed by deviceId).
+
+Bugs found & fixed (3 verified production risks):
+1. CRITICAL — Ack failure hides alarm: CriticalAlarmBanner.handleAckAll called setDismissedAt + ackAlarm BEFORE the fetch resolved, hiding the banner even on server failure. Fix: extracted pure decideAckOutcome(httpStatus, liveCount) in src/lib/indos/ack-outcome.ts; banner now only dismisses+acks-live on confirmed 2xx; on any failure the banner stays visible + error toast. (src/components/indos/shell/critical-alarm-banner.tsx, src/lib/indos/ack-outcome.ts)
+2. NEXTAUTH_SECRET dev fallback in production: auth.ts + middleware.ts fell back to a hard-coded dev secret if env var unset → session forgery risk. Fix: src/lib/auth-secret.ts throws at module-load in production if NEXTAUTH_SECRET missing/<16 chars; both auth.ts and middleware.ts import the shared constant. (src/lib/auth-secret.ts, src/lib/auth.ts, src/middleware.ts)
+3. OTA POST didn't validate target device exists: deleted preselected device created a dangling 'pending' job forever. Fix: POST /api/indos/ota now checks db.device.findUnique for scope==='single' && target → 404 DEVICE_NOT_FOUND; ota-view confirmDeploy reads server error body for actionable toast. (src/app/api/indos/ota/route.ts, src/components/indos/views/ota-view.tsx)
+
+Tests added (24 new, 105 total):
+- src/lib/indos/ack-outcome.test.ts (10 tests) — the "ack failure must not hide alarm" contract: 200/201 dismiss+ack; null/400/401/403/404/418/422/429/500/502/503/504 all keep dismiss=false+ackLive=false; exhaustive sweep.
+- src/lib/rbac.test.ts +8 tests — admin-gate enforced server-side: engineer/operator/viewer → requireRole(session,'admin') = 403; null session → 401; engineer passes engineer-gate; operator 403 on engineer-gate (bulk-ack); hasRole/getRole consistency.
+- src/lib/auth-secret.test.ts (6 tests) — production fail-fast: throws when unset/too-short in production; dev fallback preserved; trims whitespace.
+
+Browser/curl verification:
+- engineer@acme.io POST /api/indos/users → 403 FORBIDDEN ✓
+- engineer@acme.io POST /api/indos/orgs → 403 FORBIDDEN ✓
+- engineer@acme.io GET /api/indos/devices → 3 Acme devices only ✓
+- admin GET /api/indos/devices → 8 devices (both orgs) ✓
+- Disconnect banner shows on :3000 (WS unreachable) after 3s ✓
+- Dashboard renders clean, no console errors ✓
+- 105/105 tests pass; tsc 0 errors; lint 0 errors ✓
+
+Stage Summary:
+- 3 verified production risks fixed (ack-fail-no-hide, NEXTAUTH_SECRET fail-fast, OTA deleted-device validation).
+- 24 new tests covering all 6 user-prioritized high-risk gaps (ack-fail, engineer API 403, org scope, telemetry error state [code-verified], WS disconnect banner [browser-verified], OTA deleted device [code+curl-verified where firmware exists]).
+- Production build NOT run (sandbox policy prohibits `bun run build`); tsc --noEmit + lint + 105 tests are the equivalent signals. Recommend `bun run build` in CI before pilot.
+- Remaining deployment risks documented in the Phase 13 report (sqlite vs postgres schema mismatch, no prisma seed in Docker CMD, useSecureCookies=false, audit IP hardcoded in some routes, no NEXTAUTH_URL).
+- Go/No-Go: CONDITIONAL GO for a single-tenant sqlite pilot behind Caddy with the env checklist satisfied; NO-GO for the full docker-compose postgres stack until P1.1 (postgres migration) is complete.

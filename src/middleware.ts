@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
+import { NEXTAUTH_SECRET } from '@/lib/auth-secret'
 
 // Protect all IndOS API routes and the root app page.
 // Public routes: /login, /api/auth/* (NextAuth), /api/health (Docker healthcheck)
@@ -9,7 +10,7 @@ export async function middleware(req: NextRequest) {
   // Get the session token from JWT
   const token = await getToken({
     req,
-    secret: process.env.NEXTAUTH_SECRET || 'indos-dev-secret-change-in-production',
+    secret: NEXTAUTH_SECRET,
   })
 
   // If authenticated, allow through

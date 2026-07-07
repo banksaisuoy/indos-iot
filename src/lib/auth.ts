@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { db } from '@/lib/db'
+import { NEXTAUTH_SECRET } from '@/lib/auth-secret'
 
 /**
  * Extract the real client IP from request headers.
@@ -104,7 +105,7 @@ export const authOptions: NextAuthOptions = {
       return session
     },
   },
-  secret: process.env.NEXTAUTH_SECRET || 'indos-dev-secret-change-in-production',
+  secret: NEXTAUTH_SECRET,
   // CRITICAL: trust the X-Forwarded-Host header so NextAuth knows the real domain
   // (space-z.ai) instead of localhost:3000. Without this, NextAuth generates
   // absolute URLs to localhost which browsers block via Private Network Access.

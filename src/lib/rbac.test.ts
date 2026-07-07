@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import { requireRole, hasRole, getRole, type Role } from '@/lib/rbac'
+import type { Session } from 'next-auth'
 
 describe('RBAC: role hierarchy', () => {
   // These are documented contract tests — the actual enforcement runs in the
@@ -118,5 +120,69 @@ describe('Pagination: cursor', () => {
     // Existing frontend expects a flat array — this is preserved
     const flatArray = [1, 2, 3]
     expect(Array.isArray(flatArray)).toBe(true)
+  })
+})
+
+// ─── Phase 13: server-side RBAC enforcement (admin-gate) ──────────────────
+// Verifies that engineer/operator/viewer sessions are REJECTED by requireRole
+// when the route requires admin. This is the server-side guarantee behind
+// "engineer cannot create org / invite user" — the UI hides the buttons, but
+// even a direct fetch to POST /api/indos/users or POST /api/indos/orgs
+// returns 403 because apiHandler('admin', ...) calls requireRole(session,'admin').
+function mkSession(role: Role | null): Session | null {
+  if (!role) return null
+  return { user: { name: 'T', email: 't@t.io', role, id: 'u1', orgId: 'org-1' } } as any as Session
+}
+
+describe('Phase 13 — admin-gate enforced server-side (not only UI hiding)', () => {
+  it('admin session passes an admin-gated requireRole check', () => {
+    const denied = requireRole(mkSession('admin'), 'admin')
+    expect(denied).toBeNull() // null = allowed
+  })
+
+  it('engineer session is DENIED (403) for admin-gated routes (POST /users, POST /orgs)', () => {
+    const denied = requireRole(mkSession('engineer'), 'admin')
+    expect(denied).not.toBeNull()
+    expect(denied!.status).toBe(403)
+  })
+
+  it('operator session is DENIED (403) for admin-gated routes', () => {
+    const denied = requireRole(mkSession('operator'), 'admin')
+    expect(denied).not.toBeNull()
+    expect(denied!.status).toBe(403)
+  })
+
+  it('viewer session is DENIED (403) for admin-gated routes', () => {
+    const denied = requireRole(mkSession('viewer'), 'admin')
+    expect(denied).not.toBeNull()
+    expect(denied!.status).toBe(403)
+  })
+
+  it('null session (unauthenticated) is DENIED (401) — not 403', () => {
+    const denied = requireRole(mkSession(null), 'admin')
+    expect(denied).not.toBeNull()
+    expect(denied!.status).toBe(401) // 401 = auth required, distinct from 403 forbidden
+  })
+
+  it('engineer DOES pass engineer-gated routes (POST /alarms/bulk-ack, POST /ota)', () => {
+    // bulk-ack and ota deploy are engineer+ — engineers must be able to use them.
+    expect(requireRole(mkSession('engineer'), 'engineer')).toBeNull()
+  })
+
+  it('operator is DENIED (403) for engineer-gated routes (bulk-ack)', () => {
+    // Operators can ack individual alarms (operator+ PATCH) but NOT bulk-ack
+    // (engineer+). This is the documented Phase 12-C contract.
+    const denied = requireRole(mkSession('operator'), 'engineer')
+    expect(denied).not.toBeNull()
+    expect(denied!.status).toBe(403)
+  })
+
+  it('hasRole + getRole helpers agree with requireRole for all roles', () => {
+    const roles: (Role | null)[] = ['admin', 'engineer', 'operator', 'viewer', null]
+    for (const r of roles) {
+      const s = mkSession(r)
+      expect(hasRole(s, 'admin')).toBe(r === 'admin')
+      expect(getRole(s)).toBe(r)
+    }
   })
 })

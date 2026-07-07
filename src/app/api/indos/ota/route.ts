@@ -43,6 +43,24 @@ export const POST = withErrorHandler(apiHandler('engineer', RATE_LIMITS.ota, asy
     return NextResponse.json({ error: 'UNSIGNED_FIRMWARE', message: 'Firmware has no valid signature — cannot deploy' }, { status: 400 })
   }
 
+  // Phase 13: validate the target device exists when scope === 'single'.
+  // Prevents a dangling OTA job when a preselected device was deleted between
+  // the Devices view ("Send OTA") and the deploy confirmation. Without this
+  // check the job would sit in 'pending' forever with no device to report
+  // progress. Org-scoped: engineers can only target devices in their own org.
+  if (scope === 'single' && target) {
+    const device = await db.device.findUnique({
+      where: { id: target },
+      select: { id: true, projectId: true },
+    })
+    if (!device) {
+      return NextResponse.json(
+        { error: 'DEVICE_NOT_FOUND', message: 'Target device does not exist — it may have been deleted. Clear the preselection and choose a valid device.' },
+        { status: 404 },
+      )
+    }
+  }
+
   const job = await db.otaJob.create({
     data: {
       firmwareId, scope, target: target || null,

@@ -161,7 +161,13 @@ export function OtaView() {
       body: JSON.stringify({ firmwareId: deployFw.id, scope, target: target || null }),
     })
       .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        if (!r.ok) {
+          // Read the server's error message so a 404 DEVICE_NOT_FOUND (deleted
+          // preselected device) or 400 UNSIGNED_FIRMWARE is actionable.
+          return r.json().catch(() => ({})).then((body: any) => {
+            throw new Error(body?.message || `HTTP ${r.status}`)
+          })
+        }
         return r.json()
       })
       .then((newJob: OtaJob) => {
