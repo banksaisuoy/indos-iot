@@ -1,47 +1,27 @@
-# ─────────────────────────────────────────────────────────────────────
-# IndOS — Model Context Protocol (MCP) servers config
-# Provides AI coding assistants (Claude, etc.) with structured access to
-# the services powering IndOS. Each server exposes a different capability.
-# ─────────────────────────────────────────────────────────────────────
 {
   "mcpServers": {
-    # ── Firecrawl — web scraping for intelligence/reports ──────────────
-    # Used by /api/indos/ai to fetch live web content when the operator asks
-    # "what's the latest news on Modbus gateways?" etc.
     "firecrawl": {
       "command": "npx",
       "args": ["-y", "firecrawl-mcp"],
       "env": {
-        "FIRECRAWL_API_KEY": "***REMOVED***"
+        "FIRECRAWL_API_KEY": "${FIRECRAWL_API_KEY}"
       }
     },
-
-    # ── Supabase — direct DB management (Postgres) ─────────────────────
-    # Used for admin DB ops: run migrations, inspect tables, manage RLS.
     "supabase": {
       "command": "npx",
-      "args": ["-y", "@supabase/mcp-server-supabase", "--access-token", "***REMOVED***"],
+      "args": ["-y", "@supabase/mcp-server-supabase", "--access-token", "${SUPABASE_ACCESS_TOKEN}"],
       "env": {}
     },
-
-    # ── Render — manage the telemetry mini-service deployment ──────────
-    # Used to deploy/restart the MQTT+WS service that Vercel can't host.
     "render": {
       "command": "npx",
-      "args": ["-y", "@renderinc/mcp-server-render", "--api-key", "***REMOVED***"],
+      "args": ["-y", "@renderinc/mcp-server-render", "--api-key", "${RENDER_API_KEY}"],
       "env": {}
     },
-
-    # ── Vercel — manage the IndOS web deployment ───────────────────────
-    # Used for redeploy, env var management, log inspection, alias control.
     "vercel": {
       "command": "npx",
-      "args": ["-y", "@vercel/mcp-adapter", "--token", "***REMOVED***"],
+      "args": ["-y", "@vercel/mcp-adapter", "--token", "${VERCEL_TOKEN}"],
       "env": {}
     },
-
-    # ── Filesystem — read/write project files ──────────────────────────
-    # Local dev access to the IndOS codebase for the AI assistant.
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/z/my-project"],
