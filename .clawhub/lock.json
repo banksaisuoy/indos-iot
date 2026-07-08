@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skills": {
+    "@cmanfre7/debug-pro": {
+      "version": "1.0.0",
+      "installedAt": 1783503828432,
+      "ownerHandle": "cmanfre7"
+    },
+    "@wpank/code-review": {
+      "version": "1.0.0",
+      "installedAt": 1783503832599,
+      "ownerHandle": "wpank"
+    },
+    "@chandrasekar-r/security-audit": {
+      "version": "1.0.0",
+      "installedAt": 1783503836486,
+      "ownerHandle": "chandrasekar-r"
+    },
+    "@ckchzh/performance-review": {
+      "version": "2.0.0",
+      "installedAt": 1783503841109,
+      "ownerHandle": "ckchzh"
+    },
+    "@wpank/e2e-testing-patterns": {
+      "version": "1.0.0",
+      "installedAt": 1783503845042,
+      "ownerHandle": "wpank"
+    },
+    "@ttjsndx/code-project-analyzer": {
+      "version": "1.0.0",
+      "installedAt": 1783503849319,
+      "ownerHandle": "ttjsndx"
+    },
+    "@royhk920/debug-detective": {
+      "version": "1.0.0",
+      "installedAt": 1783503868237,
+      "ownerHandle": "royhk920"
+    },
+    "@sf0799/code-debug": {
+      "version": "0.1.0",
+      "installedAt": 1783503872178,
+      "ownerHandle": "sf0799"
+    },
+    "@534422530/systematic-debug": {
+      "version": "1.0.0",
+      "installedAt": 1783503876557,
+      "ownerHandle": "534422530"
+    },
+    "@xueyetianya/lint": {
+      "version": "2.0.1",
+      "installedAt": 1783503880610,
+      "ownerHandle": "xueyetianya"
+    },
+    "@cankocakulak/analyzer": {
+      "version": "1.0.1",
+      "installedAt": 1783503884595,
+      "ownerHandle": "cankocakulak"
+    },
+    "@ivangdavila/monitor": {
+      "version": "1.0.2",
+      "installedAt": 1783503888557,
+      "ownerHandle": "ivangdavila"
+    }
+  }
+}
