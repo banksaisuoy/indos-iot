@@ -164,7 +164,8 @@ model Device {
   config      String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  telemetry   Telemetry[]
+  // Telemetry relation removed for partitioned table compatibility (Phase 16).
+  // Telemetry queries use deviceId as a plain string — no FK needed.
   alarms      Alarm[]
 
   @@index([projectId])
@@ -202,16 +203,35 @@ model Sensor {
   createdAt   DateTime @default(now())
 }
 
-// ─── Telemetry (time-series in SQLite, simulated) ─────────────────────
+// ─── Telemetry (time-series — partitioned by date, see migration SQL) ──
+// FK relation removed: partitioned tables cannot have FK constraints to
+// non-partitioned tables in PostgreSQL < 12, and even in 12+ it's cleaner
+// without for high-throughput inserts. Data integrity is enforced at the
+// application layer (the telemetry service only writes deviceId values
+// that were authenticated via MQTT auth).
+//
+// Composite indexes target the two most common dashboard query patterns:
+//   1. "Show me device X's telemetry" → [deviceId, metric, ts]
+//   2. "Show me all devices in org Y" → [orgId, deviceId, ts]
+// Both are DESC on ts for "latest first" pagination.
 model Telemetry {
   id        String   @id @default(cuid())
   deviceId  String
-  device    Device   @relation(fields: [deviceId], references: [id])
+  orgId     String?  // null = platform-level (legacy); set = org-scoped
   metric    String
   value     Float
   ts        DateTime @default(now())
 
-  @@index([deviceId, metric, ts])
+  // Primary dashboard query: org-level device telemetry (latest first)
+  // Covers: WHERE orgId = ? AND deviceId = ? ORDER BY ts DESC
+  @@index([orgId, deviceId, ts(sort: Desc)])
+
+  // Secondary query: single-device metric history
+  // Covers: WHERE deviceId = ? AND metric = ? ORDER BY ts DESC
+  @@index([deviceId, metric, ts(sort: Desc)])
+
+  // Time-range scans for partition pruning + archival queries
+  @@index([ts(sort: Desc)])
 }
 
 // ─── Alarms & Notifications ───────────────────────────────────────────

@@ -6,6 +6,7 @@
       "name": "indos-telemetry",
       "dependencies": {
         "@influxdata/influxdb-client": "^1.35.0",
+        "@prisma/client": "^6.11.1",
         "aedes": "^1.1.1",
         "bcryptjs": "^3.0.3",
         "socket.io": "4.8.3",
@@ -14,6 +15,8 @@
   },
   "packages": {
     "@influxdata/influxdb-client": ["@influxdata/influxdb-client@1.35.0", "", {}, "sha512-woWMi8PDpPQpvTsRaUw4Ig+nOGS/CWwAwS66Fa1Vr/EkW+NEwxI8YfPBsdBMn33jK2Y86/qMiiuX/ROHIkJLTw=="],
+
+    "@prisma/client": ["@prisma/client@6.19.3", "", { "peerDependencies": { "prisma": "*", "typescript": ">=5.1.0" }, "optionalPeers": ["prisma", "typescript"] }, "sha512-mKq3jQFhjvko5LTJFHGilsuQs+W+T3Gm451NzuTDGQxwCzwXHYnIu2zGkRoW+Exq3Rob7yp2MfzSrdIiZVhrBg=="],
 
     "@socket.io/component-emitter": ["@socket.io/component-emitter@3.1.2", "", {}, "sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA=="],
 

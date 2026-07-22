@@ -6,6 +6,7 @@
   },
   "dependencies": {
     "@influxdata/influxdb-client": "^1.35.0",
+    "@prisma/client": "^6.11.1",
     "aedes": "^1.1.1",
     "bcryptjs": "^3.0.3",
     "socket.io": "4.8.3"

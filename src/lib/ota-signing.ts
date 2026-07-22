@@ -144,3 +144,94 @@ export function generateKeyPair(): { privateKeyBase64: string; publicKeyBase64: 
     publicKeyBase64: pubDer.toString('base64'),
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// ECDSA P-256 Binary Signing (Phase 16)
+// Used for signing firmware BINARIES (not manifests). The signature is
+// appended to HTTP response headers so ESP32 devices can verify the
+// downloaded binary after reassembling Range-request chunks.
+// ═══════════════════════════════════════════════════════════════════════
+
+/**
+ * Get the ECDSA P-256 private key as a KeyObject from env.
+ * Used for signing firmware binaries.
+ */
+function getEcdsaPrivateKey(): crypto.KeyObject {
+  const b64 = process.env.OTA_ECDSA_PRIVATE_KEY
+  if (!b64) throw new Error('OTA_ECDSA_PRIVATE_KEY env var not set. Run: bun run scripts/generate-ota-keys.ts')
+  const der = Buffer.from(b64, 'base64')
+  return crypto.createPrivateKey({ key: der, format: 'der', type: 'pkcs8' })
+}
+
+/**
+ * Get the ECDSA P-256 public key as a KeyObject from env.
+ * Used for verifying firmware binaries on the device side.
+ */
+export function getEcdsaPublicKey(): crypto.KeyObject {
+  const b64 = process.env.OTA_ECDSA_PUBLIC_KEY
+  if (!b64) throw new Error('OTA_ECDSA_PUBLIC_KEY env var not set')
+  const der = Buffer.from(b64, 'base64')
+  return crypto.createPublicKey({ key: der, format: 'der', type: 'spki' })
+}
+
+/**
+ * Sign a binary buffer with ECDSA P-256 + SHA-256.
+ * Returns the signature as base64 (DER-encoded, mbedtls-compatible).
+ *
+ * The ESP32 verifies this using:
+ *   mbedtls_pk_parse_public_key() with the ECDSA public key
+ *   mbedtls_pk_verify() with SHA-256 hash of the reassembled binary
+ */
+export function signBinaryEcdsa(binary: Buffer): string {
+  const privateKey = getEcdsaPrivateKey()
+  // SHA-256 is the hash algorithm; the signature is DER-encoded ECDSA
+  const signature = crypto.sign('sha256', binary, privateKey)
+  return signature.toString('base64')
+}
+
+/**
+ * Verify an ECDSA P-256 signature against a binary buffer.
+ * Returns true if the signature is valid.
+ */
+export function verifyBinaryEcdsa(binary: Buffer, signatureBase64: string): boolean {
+  try {
+    const publicKey = getEcdsaPublicKey()
+    const signature = Buffer.from(signatureBase64, 'base64')
+    return crypto.verify('sha256', binary, publicKey, signature)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Generate a new ECDSA P-256 key pair.
+ */
+export function generateEcdsaKeyPair(): { privateKeyBase64: string; publicKeyBase64: string } {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const privDer = privateKey.export({ type: 'pkcs8', format: 'der' })
+  const pubDer = publicKey.export({ type: 'spki', format: 'der' })
+  return {
+    privateKeyBase64: privDer.toString('base64'),
+    publicKeyBase64: pubDer.toString('base64'),
+  }
+}
+
+/**
+ * Compare two semantic version strings (e.g., "v1.2.3" vs "v1.3.0").
+ * Returns: 1 if a > b, -1 if a < b, 0 if equal.
+ * Handles "v" prefix, build metadata, and pre-release suffixes.
+ */
+export function compareSemanticVersions(a: string, b: string): number {
+  const parse = (v: string) => {
+    const clean = v.replace(/^v/i, '').split('-')[0].split('+')[0]
+    return clean.split('.').map((n) => parseInt(n, 10) || 0)
+  }
+  const [aParts, bParts] = [parse(a), parse(b)]
+  for (let i = 0; i < 3; i++) {
+    const av = aParts[i] || 0
+    const bv = bParts[i] || 0
+    if (av > bv) return 1
+    if (av < bv) return -1
+  }
+  return 0
+}
