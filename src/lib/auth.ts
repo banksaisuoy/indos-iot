@@ -36,10 +36,12 @@ export const authOptions: NextAuthOptions = {
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials, req) {
-        console.log('[auth] 🔐 authorize() called, email:', credentials?.email)
+        // Log auth attempts only in dev — production logs could leak email enumeration
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[auth] 🔐 authorize() called, email:', credentials?.email)
+        }
 
         if (!credentials?.email || !credentials?.password) {
-          console.log('[auth] ❌ Missing email or password')
           return null
         }
 
@@ -48,21 +50,20 @@ export const authOptions: NextAuthOptions = {
         })
 
         if (!user) {
-          console.log('[auth] ❌ User not found:', credentials.email)
           return null
         }
         if (user.status !== 'active' || !user.password) {
-          console.log('[auth] ❌ User inactive or no password')
           return null
         }
 
         const valid = bcrypt.compareSync(credentials.password, user.password)
         if (!valid) {
-          console.log('[auth] ❌ Password mismatch')
           return null
         }
 
-        console.log('[auth] ✅ Login successful:', user.email, 'role:', user.role, 'orgId:', user.orgId ?? '(platform)')
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[auth] ✅ Login successful:', user.email, 'role:', user.role)
+        }
         try {
           await db.user.update({ where: { id: user.id }, data: { lastLogin: new Date() } })
           // P2.7 bonus: capture real client IP via x-forwarded-for / x-real-ip when present
